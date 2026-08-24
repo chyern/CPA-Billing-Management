@@ -1,0 +1,4 @@
+# 将此配置放入 CLIProxyAPI 的 plugins.configs.cpa-billing-management 下。
+# 价格规则可以直接在管理页“费用统计”中编辑，修改后保存在插件数据目录。
+currency: USD
+

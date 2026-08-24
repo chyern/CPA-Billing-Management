@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "cpa-billing-management",
+      "name": "CPA Billing Management",
+      "description": "Adds token usage billing, price management, and cost summaries to CLIProxyAPI.",
+      "author": "chyern",
+      "repository": "https://github.com/chyern/CPA-Billing-Management",
+      "homepage": "https://github.com/chyern/CPA-Billing-Management",
+      "tags": [
+        "billing",
+        "usage",
+        "management"
+      ]
+    }
+  ]
+}
