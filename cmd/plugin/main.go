@@ -40,6 +40,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -145,8 +146,8 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case abi.MethodManagementRegister:
 		return okEnvelope(abi.ManagementRegistrationResponse{
 			Resources: []abi.ResourceRoute{
-				{Path: "/billing", Menu: "费用统计", Description: "按模型查看 CLIProxyAPI token 用量和估算费用。"},
-				{Path: "/pricing", Menu: "价格配置", Description: "配置模型的 token 估算价格。"},
+				{Path: "/billing", Menu: "费用统计", Description: "查看 usage 事件、token 用量和费用汇总。"},
+				{Path: "/pricing", Menu: "模型费用", Description: "配置模型每百万 token 的估算价格。"},
 			},
 			Routes: []abi.ManagementRoute{
 				{Method: http.MethodGet, Path: "/cpa-billing-management/summary"},
@@ -171,7 +172,7 @@ func registration() abi.Registration {
 			Author:           "CPA Billing Management",
 			GitHubRepository: "https://github.com/chyern/CPA-Billing-Management",
 			ConfigFields: []abi.ConfigField{
-				{Name: "currency", Type: "string", Description: "费用展示币种，默认 USD。价格数值按该币种计。"},
+				{Name: "currency", Type: "string", Description: "费用展示币种，默认 USD；事件未携带币种时使用此值。"},
 			},
 		},
 		Capabilities: abi.Capabilities{UsagePlugin: true, ManagementAPI: true},
@@ -203,6 +204,10 @@ func handleUsage(store *billing.Store, raw []byte) error {
 		CacheReadTokens: intValue(object, "cache_read_tokens", "cachereadtokens"), CacheCreationTokens: intValue(object, "cache_creation_tokens", "cachecreationtokens"),
 		TotalTokens: intValue(object, "total_tokens", "totaltokens"),
 	}
+	if cost, ok := upstreamCost(object); ok {
+		record.Cost, record.CostProvided = cost, true
+	}
+	record.Currency = stringValue(object, "currency", "cost_currency", "costcurrency", "billing_currency", "billingcurrency")
 	if detail, ok := lookup(object, "detail", "usage_detail", "usagedetail"); ok {
 		if detailObject, ok := detail.(map[string]any); ok {
 			record.InputTokens = firstInt(record.InputTokens, intValue(detailObject, "input_tokens", "inputtokens"))
@@ -212,6 +217,14 @@ func handleUsage(store *billing.Store, raw []byte) error {
 			record.CacheReadTokens = firstInt(record.CacheReadTokens, intValue(detailObject, "cache_read_tokens", "cachereadtokens"))
 			record.CacheCreationTokens = firstInt(record.CacheCreationTokens, intValue(detailObject, "cache_creation_tokens", "cachecreationtokens"))
 			record.TotalTokens = firstInt(record.TotalTokens, intValue(detailObject, "total_tokens", "totaltokens"))
+			if !record.CostProvided {
+				if cost, ok := upstreamCost(detailObject); ok {
+					record.Cost, record.CostProvided = cost, true
+				}
+			}
+			if record.Currency == "" {
+				record.Currency = stringValue(detailObject, "currency", "cost_currency", "costcurrency", "billing_currency", "billingcurrency")
+			}
 		}
 	}
 	if requestedAt := stringValue(object, "requested_at", "requestedat"); requestedAt != "" {
@@ -293,7 +306,7 @@ func handlePricingResource(store *billing.Store, req abi.ManagementRequest) ([]b
 		if strings.EqualFold(queryValue(req.Query, "format"), "json") {
 			return jsonManagementResponse(snapshot())
 		}
-		page, err := dashboard.RenderPricing(dashboard.Data{Rules: store.Rules()})
+		page, err := dashboard.RenderPricing(dashboard.Data{Rules: store.Rules(), Currency: store.Currency()})
 		if err != nil {
 			return nil, err
 		}
@@ -407,6 +420,54 @@ func intValue(object map[string]any, keys ...string) int64 {
 		return 0
 	}
 	return billing.ParseInt(value)
+}
+
+func floatValue(object map[string]any, keys ...string) (float64, bool) {
+	value, ok := lookup(object, keys...)
+	if !ok {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		parsed, err := typed.Float64()
+		return parsed, err == nil
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func upstreamCost(object map[string]any) (float64, bool) {
+	if cost, ok := floatValue(object, "actual_cost", "actualcost"); ok {
+		return cost, true
+	}
+	if cost, ok := floatValue(object, "total_cost", "totalcost", "cost", "price", "total_price", "totalprice", "estimated_cost", "estimatedcost", "upstream_cost", "upstreamcost", "provider_cost", "providercost", "billing_cost", "billingcost", "amount"); ok {
+		return cost, true
+	}
+	var total float64
+	var found bool
+	for _, keys := range [][]string{
+		{"input_cost", "inputcost"},
+		{"output_cost", "outputcost"},
+		{"cache_creation_cost", "cachecreationcost"},
+		{"cache_read_cost", "cachereadcost"},
+	} {
+		if cost, ok := floatValue(object, keys...); ok {
+			total += cost
+			found = true
+		}
+	}
+	return total, found
 }
 
 func boolValue(object map[string]any, keys ...string) bool {

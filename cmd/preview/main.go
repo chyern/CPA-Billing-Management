@@ -23,7 +23,11 @@ func main() {
 		},
 		Models: []*billing.Aggregate{
 			{Provider: "codex", Model: "gpt-5.5", Requests: 96, InputTokens: 6_400_000, OutputTokens: 980_000, TotalTokens: 7_380_000, Cost: 30.7, Priced: true},
-			{Provider: "claude", Model: "claude-sonnet", Requests: 32, InputTokens: 2_020_000, OutputTokens: 280_000, TotalTokens: 2_300_000, Cost: 4.0284, Priced: false},
+			{Provider: "claude", Model: "claude-sonnet", Requests: 32, InputTokens: 2_020_000, OutputTokens: 280_000, TotalTokens: 2_300_000, Cost: 4.0284, Priced: true},
+		},
+		APIKeys: []*billing.APIKeyAggregate{
+			{APIKey: "sk-a••••••demo", Requests: 96, FailedRequests: 1, InputTokens: 6_400_000, OutputTokens: 980_000, TotalTokens: 7_380_000, Cost: 30.7},
+			{APIKey: "sk-b••••••test", Requests: 32, FailedRequests: 2, InputTokens: 2_020_000, OutputTokens: 280_000, TotalTokens: 2_300_000, Cost: 4.0284},
 		},
 		RecentEvents: []billing.UsageEvent{
 			{RequestedAt: time.Now().Add(-2 * time.Minute), Provider: "codex", Model: "gpt-5.5", APIKey: "sk-a••••••demo", LatencyNanos: int64(1450 * time.Millisecond), TTFTNanos: int64(320 * time.Millisecond), InputTokens: 18_000, OutputTokens: 2_400, TotalTokens: 20_400, Cost: 0.081},
@@ -53,7 +57,7 @@ func main() {
 		var page []byte
 		var err error
 		if r.URL.Path == "/pricing" {
-			page, err = dashboard.RenderPricing(dashboard.Data{Rules: rules})
+			page, err = dashboard.RenderPricing(dashboard.Data{Rules: rules, Currency: summary.Currency})
 		} else {
 			page, err = dashboard.RenderBilling(dashboard.Data{Summary: summary})
 		}
@@ -64,6 +68,6 @@ func main() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(page)
 	})
-	log.Println("preview: http://127.0.0.1:4173")
+	log.Println("billing preview: http://127.0.0.1:4173; model costs: http://127.0.0.1:4173/pricing")
 	log.Fatal(http.ListenAndServe("127.0.0.1:4173", nil))
 }

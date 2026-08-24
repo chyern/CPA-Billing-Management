@@ -11,7 +11,7 @@ func TestRenderContainsBillingDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, expected := range []string{"CPA 费用统计", "API Key", "耗时/首字", "latency_ns", "ttft_ns", "自动刷新", "不刷新", "5 秒", "10 秒", "15 秒", "上一页", "下一页", "recent_events_total", "v0/resource/plugins/cpa-billing-management/billing"} {
+	for _, expected := range []string{"CPA 费用统计", "按 API Key 汇总", "api_keys", "failed_requests", "耗时/首字", "latency_ns", "ttft_ns", "自动刷新", "不刷新", "5 秒", "10 秒", "15 秒", "上一页", "下一页", "recent_events_total", "v0/resource/plugins/cpa-billing-management/billing"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("rendered dashboard does not contain %q", expected)
 		}
@@ -29,20 +29,20 @@ func TestRenderContainsBillingDashboard(t *testing.T) {
 	}
 }
 
-func TestRenderContainsSeparatePricingDashboard(t *testing.T) {
-	raw, err := RenderPricing(Data{Rules: []any{}})
+func TestRenderContainsSeparateModelCostDashboard(t *testing.T) {
+	raw, err := RenderPricing(Data{Rules: []any{}, Currency: "USD"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, expected := range []string{"CPA 价格配置", "价格规则", "保存价格", "v0/resource/plugins/cpa-billing-management/pricing"} {
+	for _, expected := range []string{"CPA 模型费用", "模型价格规则", "保存模型费用", "输入 / 1M", "输出 / 1M", "v0/resource/plugins/cpa-billing-management/pricing", "USD"} {
 		if !strings.Contains(text, expected) {
-			t.Fatalf("rendered pricing dashboard does not contain %q", expected)
+			t.Fatalf("rendered model-cost dashboard does not contain %q", expected)
 		}
 	}
-	for _, unexpected := range []string{"最近事件", "按模型汇总", "数据直接读取自本机插件存储"} {
+	for _, unexpected := range []string{"最近事件", "按模型汇总", "管理 API Token"} {
 		if strings.Contains(text, unexpected) {
-			t.Fatalf("pricing dashboard must not contain %q", unexpected)
+			t.Fatalf("model-cost dashboard must not contain %q", unexpected)
 		}
 	}
 }

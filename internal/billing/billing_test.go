@@ -10,22 +10,10 @@ import (
 	"time"
 )
 
-func TestCalculateCostSeparatesCacheReadTokens(t *testing.T) {
-	record := UsageRecord{InputTokens: 1_000_000, OutputTokens: 500_000, CacheReadTokens: 200_000, CacheCreationTokens: 50_000}
-	rule := PriceRule{InputPerMillion: 2, OutputPerMillion: 4, CacheReadPerMillion: 0.5, CacheCreationPerMillion: 1}
-	want := 750_000.0/1_000_000*2 + 500_000.0/1_000_000*4 + 200_000.0/1_000_000*0.5 + 50_000.0/1_000_000
-	if got := CalculateCost(record, rule); math.Abs(got-want) > 1e-12 {
-		t.Fatalf("CalculateCost() = %v, want %v", got, want)
-	}
-}
-
-func TestStorePersistsUsageAndMatchesProviderModel(t *testing.T) {
+func TestStorePersistsUpstreamUsageCost(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewStore(filepath.Join(dir, "data"))
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.SetRules([]PriceRule{{Match: "codex/gpt-5.5", InputPerMillion: 10, OutputPerMillion: 20}}); err != nil {
 		t.Fatal(err)
 	}
 	const apiKey = "sk-test-sensitive-key"
@@ -33,10 +21,11 @@ func TestStorePersistsUsageAndMatchesProviderModel(t *testing.T) {
 		Provider: "codex", Model: "gpt-5.5", APIKey: apiKey, RequestedAt: time.Now(),
 		Latency: 1500 * time.Millisecond, TTFT: 250 * time.Millisecond,
 		InputTokens: 1_000_000, OutputTokens: 2_000_000, TotalTokens: 3_000_000,
+		Cost: 4.25, CostProvided: true, Currency: "USD",
 	})
 	summary := store.Summary()
-	if summary.Totals.Requests != 1 || math.Abs(summary.Totals.Cost-50) > 1e-12 {
-		t.Fatalf("summary = %+v, want one request and cost 50", summary.Totals)
+	if summary.Totals.Requests != 1 || math.Abs(summary.Totals.Cost-4.25) > 1e-12 {
+		t.Fatalf("summary = %+v, want one request and upstream cost 4.25", summary.Totals)
 	}
 	if len(summary.RecentEvents) != 1 {
 		t.Fatalf("recent events = %d, want 1", len(summary.RecentEvents))
@@ -56,8 +45,33 @@ func TestStorePersistsUsageAndMatchesProviderModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := reloaded.Summary().Totals.Cost; math.Abs(got-50) > 1e-12 {
-		t.Fatalf("reloaded cost = %v, want 50", got)
+	if got := reloaded.Summary().Totals.Cost; math.Abs(got-4.25) > 1e-12 {
+		t.Fatalf("reloaded cost = %v, want 4.25", got)
+	}
+	if err := reloaded.SetRules([]PriceRule{{Match: "gpt-5.5", InputPerMillion: 99, OutputPerMillion: 99}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := reloaded.Summary().Totals.Cost; math.Abs(got-4.25) > 1e-12 {
+		t.Fatalf("upstream cost after model price change = %v, want 4.25", got)
+	}
+}
+
+func TestCalculateCostAndModelPriceFallback(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetRules([]PriceRule{{Match: "codex/gpt-test", InputPerMillion: 2, OutputPerMillion: 4, CacheReadPerMillion: 0.5, CacheCreationPerMillion: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	store.HandleUsage(UsageRecord{
+		Provider: "codex", Model: "gpt-test", InputTokens: 1_000_000, OutputTokens: 500_000,
+		CachedTokens: 250_000, CacheReadTokens: 200_000, CacheCreationTokens: 50_000,
+	})
+	want := 750_000.0/1_000_000*2 + 500_000.0/1_000_000*4 + 200_000.0/1_000_000*0.5 + 50_000.0/1_000_000
+	summary := store.Summary()
+	if math.Abs(summary.Totals.Cost-want) > 1e-12 || len(summary.Models) != 1 || !summary.Models[0].Priced {
+		t.Fatalf("model-price fallback summary = %+v, want cost %v", summary, want)
 	}
 }
 
@@ -76,7 +90,45 @@ func TestMaskAPIKey(t *testing.T) {
 	}
 }
 
-func TestUnknownModelUsesWildcardAndIsMarkedUnpriced(t *testing.T) {
+func TestSummaryAggregatesByAPIKeyAcrossAllEvents(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyA := "sk-alpha-sensitive-one"
+	keyB := "sk-beta-sensitive-two"
+	store.HandleUsage(UsageRecord{APIKey: keyA, InputTokens: 10, OutputTokens: 2, TotalTokens: 12, Cost: 1, CostProvided: true})
+	// Simulate an event persisted before stable API key identifiers existed.
+	store.mu.Lock()
+	store.state.Events[0].APIKeyID = "legacy:" + store.state.Events[0].APIKey
+	store.mu.Unlock()
+	store.HandleUsage(UsageRecord{APIKey: keyB, InputTokens: 20, OutputTokens: 3, TotalTokens: 23, Cost: 2, CostProvided: true})
+	store.HandleUsage(UsageRecord{APIKey: keyA, InputTokens: 30, OutputTokens: 4, TotalTokens: 34, Cost: 3, CostProvided: true, Failed: true})
+	store.HandleUsage(UsageRecord{InputTokens: 40, TotalTokens: 40})
+
+	summary := store.SummaryPage(1, 1)
+	if len(summary.APIKeys) != 3 {
+		t.Fatalf("api key aggregates = %d, want 3: %+v", len(summary.APIKeys), summary.APIKeys)
+	}
+	first := summary.APIKeys[0]
+	if first.APIKey != MaskAPIKey(keyA) || first.Requests != 2 || first.FailedRequests != 1 || first.InputTokens != 40 || first.OutputTokens != 6 || first.TotalTokens != 46 || first.Cost != 4 {
+		t.Fatalf("first api key aggregate = %+v", first)
+	}
+	if summary.APIKeys[1].Requests != 1 || summary.APIKeys[2].Requests != 1 {
+		t.Fatalf("remaining api key aggregates = %+v", summary.APIKeys[1:])
+	}
+}
+
+func TestMaskSensitiveSource(t *testing.T) {
+	if got := MaskSensitiveSource("codex"); got != "codex" {
+		t.Fatalf("ordinary source = %q, want codex", got)
+	}
+	if got := MaskSensitiveSource("sk-test-sensitive-key"); got != "sk-t••••••-key" {
+		t.Fatalf("secret source = %q, want masked value", got)
+	}
+}
+
+func TestMissingUpstreamCostIsMarkedUnpriced(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -88,6 +140,21 @@ func TestUnknownModelUsesWildcardAndIsMarkedUnpriced(t *testing.T) {
 	}
 	if summary.Totals.Cost != 0 {
 		t.Fatalf("unknown model cost = %v, want 0", summary.Totals.Cost)
+	}
+}
+
+func TestSetRulesRecalculatesOnlyEstimatedEvents(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.HandleUsage(UsageRecord{Provider: "codex", Model: "future-model", InputTokens: 1_000_000, TotalTokens: 1_000_000})
+	store.HandleUsage(UsageRecord{Provider: "codex", Model: "billed-model", InputTokens: 1_000_000, Cost: 2.5, CostProvided: true})
+	if err := store.SetRules([]PriceRule{{Match: "future-model", InputPerMillion: 7}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Summary().Totals.Cost; math.Abs(got-9.5) > 1e-12 {
+		t.Fatalf("recalculated mixed cost = %v, want 9.5", got)
 	}
 }
 
@@ -111,26 +178,5 @@ func TestSummaryPagePaginatesRecentEventsNewestFirstByPage(t *testing.T) {
 	last := store.SummaryPage(99, 20)
 	if last.RecentEventsPage != 3 || len(last.RecentEvents) != 5 || last.RecentEvents[0].Model != "event-00" || last.RecentEvents[4].Model != "event-04" {
 		t.Fatalf("clamped last page = page %d, events %+v", last.RecentEventsPage, last.RecentEvents)
-	}
-}
-
-func TestSetRulesRecalculatesHistoricalEvents(t *testing.T) {
-	store, err := NewStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	store.HandleUsage(UsageRecord{Provider: "codex", Model: "future-model", InputTokens: 1_000_000, TotalTokens: 1_000_000})
-	if got := store.Summary().Totals.Cost; got != 0 {
-		t.Fatalf("initial cost = %v, want 0", got)
-	}
-	if err := store.SetRules([]PriceRule{{Match: "future-model", InputPerMillion: 7}}); err != nil {
-		t.Fatal(err)
-	}
-	summary := store.Summary()
-	if got := summary.Totals.Cost; math.Abs(got-7) > 1e-12 {
-		t.Fatalf("recalculated cost = %v, want 7", got)
-	}
-	if len(summary.Models) != 1 || !summary.Models[0].Priced {
-		t.Fatalf("model should be marked priced: %+v", summary.Models)
 	}
 }

@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,6 +50,9 @@ type UsageRecord struct {
 	CacheReadTokens     int64
 	CacheCreationTokens int64
 	TotalTokens         int64
+	Cost                float64
+	CostProvided        bool
+	Currency            string
 }
 
 type UsageEvent struct {
@@ -57,6 +61,7 @@ type UsageEvent struct {
 	Model               string    `json:"model"`
 	Alias               string    `json:"alias,omitempty"`
 	APIKey              string    `json:"api_key,omitempty"`
+	APIKeyID            string    `json:"api_key_id,omitempty"`
 	AuthType            string    `json:"auth_type,omitempty"`
 	Source              string    `json:"source,omitempty"`
 	LatencyNanos        int64     `json:"latency_ns,omitempty"`
@@ -87,6 +92,18 @@ type Aggregate struct {
 	Priced          bool    `json:"priced"`
 }
 
+type APIKeyAggregate struct {
+	APIKey          string  `json:"api_key"`
+	Requests        int64   `json:"requests"`
+	FailedRequests  int64   `json:"failed_requests"`
+	InputTokens     int64   `json:"input_tokens"`
+	OutputTokens    int64   `json:"output_tokens"`
+	ReasoningTokens int64   `json:"reasoning_tokens"`
+	CachedTokens    int64   `json:"cached_tokens"`
+	TotalTokens     int64   `json:"total_tokens"`
+	Cost            float64 `json:"cost"`
+}
+
 type Totals struct {
 	Requests        int64   `json:"requests"`
 	FailedRequests  int64   `json:"failed_requests"`
@@ -108,17 +125,18 @@ type State struct {
 }
 
 type Summary struct {
-	Version              int          `json:"version"`
-	Currency             string       `json:"currency"`
-	UpdatedAt            time.Time    `json:"updated_at"`
-	Totals               Totals       `json:"totals"`
-	Models               []*Aggregate `json:"models"`
-	RecentEvents         []UsageEvent `json:"recent_events"`
-	RecentEventsTotal    int          `json:"recent_events_total"`
-	RecentEventsPage     int          `json:"recent_events_page"`
-	RecentEventsPages    int          `json:"recent_events_pages"`
-	RecentEventsPageSize int          `json:"recent_events_page_size"`
-	UnpricedModels       []string     `json:"unpriced_models"`
+	Version              int                `json:"version"`
+	Currency             string             `json:"currency"`
+	UpdatedAt            time.Time          `json:"updated_at"`
+	Totals               Totals             `json:"totals"`
+	Models               []*Aggregate       `json:"models"`
+	APIKeys              []*APIKeyAggregate `json:"api_keys"`
+	RecentEvents         []UsageEvent       `json:"recent_events"`
+	RecentEventsTotal    int                `json:"recent_events_total"`
+	RecentEventsPage     int                `json:"recent_events_page"`
+	RecentEventsPages    int                `json:"recent_events_pages"`
+	RecentEventsPageSize int                `json:"recent_events_page_size"`
+	UnpricedModels       []string           `json:"unpriced_models"`
 }
 
 type Store struct {
@@ -129,9 +147,7 @@ type Store struct {
 }
 
 func DefaultRules() []PriceRule {
-	return []PriceRule{
-		{Match: "*", InputPerMillion: 0, OutputPerMillion: 0, CacheReadPerMillion: 0},
-	}
+	return []PriceRule{{Match: "*"}}
 }
 
 func NewStore(dataDir string) (*Store, error) {
@@ -173,6 +189,14 @@ func (s *Store) load() error {
 	var loaded State
 	if err := json.Unmarshal(raw, &loaded); err != nil {
 		return fmt.Errorf("decode billing state: %w", err)
+	}
+	// Older versions persisted Source verbatim.  Redact secret-like values
+	// while loading so an existing state file is migrated on the next write.
+	for i := range loaded.Events {
+		loaded.Events[i].Source = MaskSensitiveSource(loaded.Events[i].Source)
+		if loaded.Events[i].APIKeyID == "" && loaded.Events[i].APIKey != "" {
+			loaded.Events[i].APIKeyID = "legacy:" + loaded.Events[i].APIKey
+		}
 	}
 	if loaded.Version == 0 {
 		loaded.Version = stateVersion
@@ -218,17 +242,26 @@ func (s *Store) HandleUsage(record UsageRecord) {
 	if record.TotalTokens == 0 {
 		record.TotalTokens = record.InputTokens + record.OutputTokens
 	}
-	rule, matched := s.matchRule(record)
-	cost := CalculateCost(record, rule)
+	if currency := strings.TrimSpace(record.Currency); currency != "" {
+		s.state.Currency = currency
+	}
+	cost, priced, pricedBy := record.Cost, record.CostProvided, "upstream"
+	if !record.CostProvided {
+		rule, matched := s.matchRule(record)
+		cost, priced, pricedBy = CalculateCost(record, rule), matched, rule.Match
+	}
+	if cost < 0 {
+		cost = 0
+	}
 	event := UsageEvent{
 		RequestedAt: record.RequestedAt, Provider: record.Provider, Model: record.Model,
-		Alias: record.Alias, APIKey: MaskAPIKey(record.APIKey), AuthType: record.AuthType,
-		Source: record.Source, LatencyNanos: nonNegativeDuration(record.Latency),
+		Alias: record.Alias, APIKey: MaskAPIKey(record.APIKey), APIKeyID: APIKeyIdentifier(record.APIKey), AuthType: record.AuthType,
+		Source: MaskSensitiveSource(record.Source), LatencyNanos: nonNegativeDuration(record.Latency),
 		TTFTNanos: nonNegativeDuration(record.TTFT), Failed: record.Failed, InputTokens: record.InputTokens,
 		OutputTokens: record.OutputTokens, ReasoningTokens: record.ReasoningTokens,
 		CachedTokens: record.CachedTokens, CacheReadTokens: record.CacheReadTokens,
 		CacheCreationTokens: record.CacheCreationTokens, TotalTokens: record.TotalTokens,
-		Cost: cost, PricedBy: rule.Match,
+		Cost: cost, PricedBy: pricedBy,
 	}
 	s.state.Events = append(s.state.Events, event)
 	if len(s.state.Events) > maxPersistedEvents {
@@ -251,7 +284,6 @@ func (s *Store) HandleUsage(record UsageRecord) {
 	aggregate.CachedTokens += record.CachedTokens
 	aggregate.TotalTokens += record.TotalTokens
 	aggregate.Cost += cost
-	priced := matched
 	if wasEmpty {
 		aggregate.Priced = priced
 	} else {
@@ -278,6 +310,34 @@ func MaskAPIKey(value string) string {
 	default:
 		return string(runes[:4]) + "••••••" + string(runes[len(runes)-4:])
 	}
+}
+
+// APIKeyIdentifier separates credentials that happen to have the same masked
+// label without retaining the full key. It is used only as a grouping key.
+func APIKeyIdentifier(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(value))
+	return fmt.Sprintf("%x", sum[:8])
+}
+
+// MaskSensitiveSource protects source values that are actually credentials in
+// some CPA integrations, while preserving ordinary source labels.
+func MaskSensitiveSource(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.ContainsRune(value, '•') {
+		return value
+	}
+	lower := strings.ToLower(value)
+	secretLike := strings.HasPrefix(lower, "sk-") || strings.HasPrefix(lower, "rk-") ||
+		strings.HasPrefix(lower, "pk-") || strings.HasPrefix(lower, "api-") ||
+		strings.HasPrefix(lower, "bearer ")
+	if secretLike {
+		return MaskAPIKey(value)
+	}
+	return value
 }
 
 func nonNegativeDuration(value time.Duration) int64 {
@@ -362,6 +422,50 @@ func (s *Store) SummaryPage(page, pageSize int) Summary {
 		}
 	}
 	sort.Slice(models, func(i, j int) bool { return models[i].Cost > models[j].Cost })
+	apiKeyMap := make(map[string]*APIKeyAggregate)
+	legacyLabels := make(map[string]struct{})
+	for _, event := range s.state.Events {
+		if strings.HasPrefix(event.APIKeyID, "legacy:") && event.APIKey != "" {
+			legacyLabels[event.APIKey] = struct{}{}
+		}
+	}
+	for _, event := range s.state.Events {
+		label := strings.TrimSpace(event.APIKey)
+		if label == "" {
+			label = "未提供"
+		}
+		groupKey := event.APIKeyID
+		if _, legacy := legacyLabels[label]; legacy {
+			groupKey = "legacy:" + label
+		} else if groupKey == "" {
+			groupKey = "legacy:" + label
+		}
+		aggregate := apiKeyMap[groupKey]
+		if aggregate == nil {
+			aggregate = &APIKeyAggregate{APIKey: label}
+			apiKeyMap[groupKey] = aggregate
+		}
+		aggregate.Requests++
+		if event.Failed {
+			aggregate.FailedRequests++
+		}
+		aggregate.InputTokens += event.InputTokens
+		aggregate.OutputTokens += event.OutputTokens
+		aggregate.ReasoningTokens += event.ReasoningTokens
+		aggregate.CachedTokens += event.CachedTokens
+		aggregate.TotalTokens += event.TotalTokens
+		aggregate.Cost += event.Cost
+	}
+	apiKeys := make([]*APIKeyAggregate, 0, len(apiKeyMap))
+	for _, aggregate := range apiKeyMap {
+		apiKeys = append(apiKeys, aggregate)
+	}
+	sort.Slice(apiKeys, func(i, j int) bool {
+		if apiKeys[i].Requests == apiKeys[j].Requests {
+			return apiKeys[i].APIKey < apiKeys[j].APIKey
+		}
+		return apiKeys[i].Requests > apiKeys[j].Requests
+	})
 	totalEvents := len(s.state.Events)
 	pages := (totalEvents + pageSize - 1) / pageSize
 	if pages == 0 {
@@ -385,7 +489,7 @@ func (s *Store) SummaryPage(page, pageSize int) Summary {
 	}
 	sort.Strings(unpricedModels)
 	return Summary{Version: s.state.Version, Currency: s.state.Currency, UpdatedAt: s.state.UpdatedAt,
-		Totals: totals, Models: models, RecentEvents: events, RecentEventsTotal: totalEvents,
+		Totals: totals, Models: models, APIKeys: apiKeys, RecentEvents: events, RecentEventsTotal: totalEvents,
 		RecentEventsPage: page, RecentEventsPages: pages, RecentEventsPageSize: pageSize,
 		UnpricedModels: unpricedModels}
 }
@@ -400,11 +504,17 @@ func (s *Store) SetRules(rules []PriceRule) error {
 	if len(rules) == 0 {
 		return fmt.Errorf("at least one pricing rule is required")
 	}
+	seen := make(map[string]struct{}, len(rules))
 	for i := range rules {
 		rules[i].Match = strings.TrimSpace(rules[i].Match)
 		if rules[i].Match == "" {
 			return fmt.Errorf("pricing rule %d has an empty match", i)
 		}
+		key := strings.ToLower(rules[i].Match)
+		if _, exists := seen[key]; exists {
+			return fmt.Errorf("duplicate pricing rule %q", rules[i].Match)
+		}
+		seen[key] = struct{}{}
 		if rules[i].InputPerMillion < 0 || rules[i].OutputPerMillion < 0 || rules[i].CacheReadPerMillion < 0 || rules[i].CacheCreationPerMillion < 0 {
 			return fmt.Errorf("pricing rule %q contains a negative price", rules[i].Match)
 		}
@@ -431,9 +541,13 @@ func (s *Store) recalculateLocked() {
 			CacheReadTokens: event.CacheReadTokens, CacheCreationTokens: event.CacheCreationTokens,
 			TotalTokens: event.TotalTokens, Failed: event.Failed,
 		}
-		rule, matched := s.matchRule(record)
-		event.Cost = CalculateCost(record, rule)
-		event.PricedBy = rule.Match
+		matched := true
+		if !strings.EqualFold(event.PricedBy, "upstream") {
+			rule, localMatched := s.matchRule(record)
+			event.Cost = CalculateCost(record, rule)
+			event.PricedBy = rule.Match
+			matched = localMatched
+		}
 		key := aggregateKey(event.Provider, event.Model)
 		aggregate := s.state.Aggregates[key]
 		if aggregate == nil {
@@ -473,9 +587,8 @@ func (s *Store) Currency() string {
 }
 
 func (s *Store) ConfigureYAML(raw []byte) {
-	// The host sends plugin configuration as YAML. Currency is intentionally the
-	// only scalar setting parsed here; pricing rules remain editable through the
-	// management page and are persisted in the plugin state file.
+	// The host sends plugin configuration as YAML. Pricing rules stay editable
+	// through the model-cost page and are persisted in the plugin state file.
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "currency:") {
