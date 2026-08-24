@@ -96,8 +96,8 @@ func TestPluginBillingFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	resourceBody := managementBody(t, resourceRaw)
-	if !contains(string(resourceBody), "test-model") {
-		t.Fatal("resource page must embed the current local billing snapshot")
+	if contains(string(resourceBody), "test-model") {
+		t.Fatal("resource page must not embed the local billing snapshot")
 	}
 	if !contains(string(resourceBody), "API Key") || !contains(string(resourceBody), "耗时/首字") || !contains(string(resourceBody), "latency_ns") || !contains(string(resourceBody), "ttft_ns") {
 		t.Fatal("resource page must show the masked API key, total latency, and TTFT")
@@ -107,6 +107,12 @@ func TestPluginBillingFlow(t *testing.T) {
 	}
 	if contains(string(resourceBody), apiKey) {
 		t.Fatal("resource page must not expose the complete API key")
+	}
+	if contains(string(resourceBody), "sk-t••••••-key") {
+		t.Fatal("resource page must not expose the masked API key before authenticated API loading")
+	}
+	if !contains(string(resourceBody), "/v0/management/cpa-billing-management/summary") {
+		t.Fatal("resource page must load data through the authenticated management API")
 	}
 	if contains(string(resourceBody), "管理 API Token") {
 		t.Fatal("local resource page must not request a management API token")
@@ -121,14 +127,24 @@ func TestPluginBillingFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var snapshot struct {
-		Summary billing.Summary `json:"summary"`
+	if got := managementStatus(t, refreshRaw); got != http.StatusNotFound {
+		t.Fatalf("billing resource JSON status = %d, want %d", got, http.StatusNotFound)
 	}
-	if err := json.Unmarshal(managementBody(t, refreshRaw), &snapshot); err != nil {
+	managementRefreshReq, _ := json.Marshal(abi.ManagementRequest{
+		Method: http.MethodGet,
+		Path:   "/v0/management/cpa-billing-management/summary",
+		Query:  map[string][]string{"page": {"2"}, "page_size": {"1"}},
+	})
+	managementRefreshRaw, err := handleMethod(abi.MethodManagementHandle, managementRefreshReq)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Summary.Totals.Cost != 9 || snapshot.Summary.RecentEventsTotal != 2 || snapshot.Summary.RecentEventsPage != 2 || snapshot.Summary.RecentEventsPageSize != 1 {
-		t.Fatalf("billing resource snapshot = %+v", snapshot.Summary.Totals)
+	var pagedSummary billing.Summary
+	if err := json.Unmarshal(managementBody(t, managementRefreshRaw), &pagedSummary); err != nil {
+		t.Fatal(err)
+	}
+	if pagedSummary.Totals.Cost != 9 || pagedSummary.RecentEventsTotal != 2 || pagedSummary.RecentEventsPage != 2 || pagedSummary.RecentEventsPageSize != 1 {
+		t.Fatalf("authenticated management summary page = %+v", pagedSummary)
 	}
 	billingPutReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodPut, Path: resourcePath})
 	billingPutRaw, err := handleMethod(abi.MethodManagementHandle, billingPutReq)
@@ -145,13 +161,29 @@ func TestPluginBillingFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	pricingPage := managementBody(t, pricingRaw)
-	if !contains(string(pricingPage), "CPA 模型费用") || !contains(string(pricingPage), "模型价格规则") || !contains(string(pricingPage), "保存模型费用") || contains(string(pricingPage), "最近事件") {
+	if !contains(string(pricingPage), "CPA 模型费用") || !contains(string(pricingPage), "模型价格规则") || !contains(string(pricingPage), "保存模型费用") || !contains(string(pricingPage), "/v0/management/cpa-billing-management/prices") || contains(string(pricingPage), "最近事件") || contains(string(pricingPage), "test-model") {
 		t.Fatal("model-cost resource page must contain only pricing controls")
+	}
+	pricingJSONReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodGet, Path: pricingPath, Query: map[string][]string{"format": {"json"}}})
+	pricingJSONRaw, err := handleMethod(abi.MethodManagementHandle, pricingJSONReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := managementStatus(t, pricingJSONRaw); got != http.StatusNotFound {
+		t.Fatalf("pricing resource JSON status = %d, want %d", got, http.StatusNotFound)
 	}
 
 	localPricesBody, _ := json.Marshal(map[string]any{"rules": []billing.PriceRule{{Match: "test-model", InputPerMillion: 3, OutputPerMillion: 6}}})
 	localPricesReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodPut, Path: pricingPath, Body: localPricesBody})
 	localPricesRaw, err := handleMethod(abi.MethodManagementHandle, localPricesReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := managementStatus(t, localPricesRaw); got != http.StatusMethodNotAllowed {
+		t.Fatalf("pricing resource PUT status = %d, want %d", got, http.StatusMethodNotAllowed)
+	}
+	managementPricesReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodPut, Path: "/v0/management/cpa-billing-management/prices", Body: localPricesBody})
+	localPricesRaw, err = handleMethod(abi.MethodManagementHandle, managementPricesReq)
 	if err != nil {
 		t.Fatal(err)
 	}

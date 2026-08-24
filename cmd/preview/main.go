@@ -40,24 +40,49 @@ func main() {
 		{Match: "*"},
 	}
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v0/resource/plugins/cpa-billing-management/billing" && r.URL.Query().Get("format") == "json" {
+		switch r.URL.Path {
+		case "/v0/management/cpa-billing-management/summary":
 			page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+			pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
 			if page < 1 {
 				page = 1
 			}
-			if page > summary.RecentEventsPages {
-				page = summary.RecentEventsPages
+			if pageSize <= 0 {
+				pageSize = 20
 			}
 			updated := summary
 			updated.RecentEventsPage = page
+			updated.RecentEventsPageSize = pageSize
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"summary": updated})
+			_ = json.NewEncoder(w).Encode(updated)
+			return
+		case "/v0/management/cpa-billing-management/prices":
+			if r.Method == http.MethodPut {
+				var payload struct {
+					Rules []billing.PriceRule `json:"rules"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				rules = payload.Rules
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"currency": summary.Currency, "rules": rules})
+			return
+		}
+		if (r.URL.Path == "/v0/resource/plugins/cpa-billing-management/billing" || r.URL.Path == "/v0/resource/plugins/cpa-billing-management/pricing") && r.URL.Query().Get("format") == "json" {
+			http.Error(w, "resource JSON is disabled; use the authenticated management API", http.StatusNotFound)
 			return
 		}
 		var page []byte
 		var err error
 		if r.URL.Path == "/pricing" {
 			page, err = dashboard.RenderPricing(dashboard.Data{Rules: rules, Currency: summary.Currency})
+		} else if r.URL.Path == "/v0/resource/plugins/cpa-billing-management/pricing" {
+			page, err = dashboard.RenderPricing(dashboard.Data{})
+		} else if r.URL.Path == "/v0/resource/plugins/cpa-billing-management/billing" {
+			page, err = dashboard.RenderBilling(dashboard.Data{})
 		} else {
 			page, err = dashboard.RenderBilling(dashboard.Data{Summary: summary})
 		}

@@ -50,3 +50,46 @@ jobs:
             dist/checksums.txt \
             --title "CPA Billing Management ${GITHUB_REF_NAME}" \
             --generate-notes
+
+  release-linux-amd64:
+    needs: release-darwin-arm64
+    runs-on: ubuntu-24.04
+    env:
+      PLUGIN_ID: cpa-billing-management
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build and package Linux amd64 plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          asset="${PLUGIN_ID}_${version}_linux_amd64.zip"
+          checksum_asset="checksums_linux_amd64.txt"
+          mkdir -p dist/package
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CC=gcc \
+            go build -buildmode=c-shared \
+            -o "dist/package/${PLUGIN_ID}.so" ./cmd/plugin
+          (cd dist/package && zip -9 "../${asset}" "${PLUGIN_ID}.so")
+          (cd dist && sha256sum "${asset}" > "${checksum_asset}")
+          rm -rf dist/package
+
+      - name: Publish Linux artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            "dist/${PLUGIN_ID}_"*_linux_amd64.zip \
+            dist/checksums_linux_amd64.txt \
+            --clobber

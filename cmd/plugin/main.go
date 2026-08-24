@@ -248,7 +248,9 @@ func handleManagement(store *billing.Store, raw []byte) ([]byte, error) {
 	case path == pricingPath:
 		return handlePricingResource(store, req)
 	case req.Method == http.MethodGet && strings.HasSuffix(path, "/summary"):
-		return jsonManagementResponse(store.Summary())
+		page := billing.ParseInt(queryValue(req.Query, "page"))
+		pageSize := billing.ParseInt(queryValue(req.Query, "page_size"))
+		return jsonManagementResponse(store.SummaryPage(int(page), int(pageSize)))
 	case req.Method == http.MethodGet && strings.HasSuffix(path, "/prices"):
 		return jsonManagementResponse(map[string]any{"currency": store.Currency(), "rules": store.Rules()})
 	case req.Method == http.MethodPut && strings.HasSuffix(path, "/prices"):
@@ -279,13 +281,10 @@ func handleBillingResource(store *billing.Store, req abi.ManagementRequest) ([]b
 	}
 	switch method {
 	case http.MethodGet:
-		pageNumber := billing.ParseInt(queryValue(req.Query, "page"))
-		pageSize := billing.ParseInt(queryValue(req.Query, "page_size"))
-		summary := store.SummaryPage(int(pageNumber), int(pageSize))
 		if strings.EqualFold(queryValue(req.Query, "format"), "json") {
-			return jsonManagementResponse(map[string]any{"summary": summary})
+			return jsonManagementError(http.StatusNotFound, "resource JSON is disabled; use the authenticated management API")
 		}
-		page, err := dashboard.RenderBilling(dashboard.Data{Summary: summary})
+		page, err := dashboard.RenderBilling(dashboard.Data{})
 		if err != nil {
 			return nil, err
 		}
@@ -300,28 +299,18 @@ func handlePricingResource(store *billing.Store, req abi.ManagementRequest) ([]b
 	if method == "" {
 		method = http.MethodGet
 	}
-	snapshot := func() map[string]any { return map[string]any{"currency": store.Currency(), "rules": store.Rules()} }
 	switch method {
 	case http.MethodGet:
 		if strings.EqualFold(queryValue(req.Query, "format"), "json") {
-			return jsonManagementResponse(snapshot())
+			return jsonManagementError(http.StatusNotFound, "resource JSON is disabled; use the authenticated management API")
 		}
-		page, err := dashboard.RenderPricing(dashboard.Data{Rules: store.Rules(), Currency: store.Currency()})
+		page, err := dashboard.RenderPricing(dashboard.Data{})
 		if err != nil {
 			return nil, err
 		}
 		return htmlManagementResponse(page)
 	case http.MethodPut:
-		var payload struct {
-			Rules []billing.PriceRule `json:"rules"`
-		}
-		if err := json.Unmarshal(req.Body, &payload); err != nil {
-			return jsonManagementError(http.StatusBadRequest, err.Error())
-		}
-		if err := store.SetRules(payload.Rules); err != nil {
-			return jsonManagementError(http.StatusBadRequest, err.Error())
-		}
-		return jsonManagementResponse(snapshot())
+		return jsonManagementError(http.StatusMethodNotAllowed, "resource writes are disabled; use the authenticated management API")
 	default:
 		return jsonManagementError(http.StatusMethodNotAllowed, "method not allowed")
 	}

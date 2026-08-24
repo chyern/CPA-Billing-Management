@@ -23,7 +23,8 @@ make test
 make build
 ```
 
-构建产物为 `bin/cpa-billing-management.dylib`。Linux 上可按 CLIProxyAPI 的插件加载约定将输出文件名改为 `.so`。
+构建产物为 `bin/cpa-billing-management.dylib`。Linux 发布包会包含
+`cpa-billing-management.so`，当前提供 `linux/amd64` 架构。
 
 ## 安装与配置
 
@@ -39,7 +40,7 @@ https://raw.githubusercontent.com/chyern/CPA-Billing-Management/main/registry.js
 插件安装包来自此仓库的 GitHub Release，第三方源通过固定版本、平台和 SHA-256 声明直接安装，
 因此不会消耗 GitHub Releases API 的匿名请求额度。发布新版本时需要同步更新 `registry.json`。
 
-当前发布流程提供 Darwin arm64 产物，适用于 Apple Silicon Mac。
+当前发布流程提供 Darwin arm64（Apple Silicon Mac）和 Linux amd64 产物。
 
 ### 手动安装
 
@@ -90,6 +91,6 @@ make install-local \\
 
 `/v0/resource/plugins/cpa-billing-management/pricing`
 
-资源页面直接读取插件本地存储，不需要重复输入管理 API Token；模型费用保存后会重新计算没有上游金额的历史事件。
-带管理认证的 API 仍保留给外部自动化使用。若 CLIProxyAPI 对公网开放，请同时限制插件资源路由的网络访问，
-因为资源页面会展示账单数据并允许修改本地模型价格。
+资源页面只提供不包含账单数据的页面壳；页面加载的数据和模型费用修改统一通过带管理认证的 API 完成，
+因此不会把账单数据嵌入未认证的资源响应，也不会允许通过资源路由直接读取 JSON 或修改价格。
+带管理认证的 API 仍保留给外部自动化使用。若 CLIProxyAPI 对公网开放，仍应按 CLIProxyAPI 的部署方式保护管理 API。
