@@ -56,7 +56,33 @@ func TestStorePersistsUpstreamUsageCost(t *testing.T) {
 	}
 }
 
-func TestConfigureYAMLReadsManagementKeyWithoutPersistingIt(t *testing.T) {
+func TestSetRulesRejectsNonFinitePrices(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), -0.1} {
+		err := store.SetRules([]PriceRule{{Match: "example", InputPerMillion: value}})
+		if err == nil {
+			t.Fatalf("SetRules accepted invalid price %v", value)
+		}
+	}
+}
+
+func TestStoreStartsWithoutDefaultPricingRule(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rules := store.Rules(); len(rules) != 0 {
+		t.Fatalf("default rules = %+v, want no default rule", rules)
+	}
+	if err := store.SetRules(nil); err != nil {
+		t.Fatalf("clearing pricing rules: %v", err)
+	}
+}
+
+func TestConfigureYAMLIgnoresManagementKey(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -65,15 +91,12 @@ func TestConfigureYAMLReadsManagementKeyWithoutPersistingIt(t *testing.T) {
 	if got := store.Currency(); got != "CNY" {
 		t.Fatalf("currency = %q, want CNY", got)
 	}
-	if got := store.ManagementKey(); got != "test-management-secret" {
-		t.Fatalf("management key = %q, want configured key", got)
-	}
 	raw, err := os.ReadFile(filepath.Join(store.dataDir, "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "test-management-secret") {
-		t.Fatal("management key must not be persisted with billing state")
+	if strings.Contains(string(raw), "test-management-secret") || strings.Contains(string(raw), "management_key") {
+		t.Fatal("management key must not be persisted or configured by billing state")
 	}
 }
 

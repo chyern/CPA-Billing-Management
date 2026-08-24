@@ -11,13 +11,13 @@ func TestRenderContainsBillingDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, expected := range []string{"CPA 费用统计", "按 API Key 汇总", "api_keys", "failed_requests", "耗时/首字", "输入", "缓存", "cached_tokens", "latency_ns", "ttft_ns", "自动刷新", "不刷新", "5 秒", "10 秒", "15 秒", "上一页", "下一页", "recent_events_total", "v0/management/cpa-billing-management/summary", "format=fallback-json", "X-Management-Key"} {
+	for _, expected := range []string{"CPA 费用统计", "按 API Key 汇总", "api_keys", "failed_requests", "耗时/首字", "输入", "缓存", "cached_tokens", "latency_ns", "ttft_ns", "自动刷新", "不刷新", "5 秒", "10 秒", "15 秒", "上一页", "下一页", "recent_events_total", "v0/management/cpa-billing-management/summary", "cli-proxy-auth", "enc::v1::", "Authorization:'Bearer '+MANAGEMENT_KEY", "/management.html#/login"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("rendered dashboard does not contain %q", expected)
 		}
 	}
-	if strings.Contains(text, "管理 API Token") {
-		t.Fatal("rendered dashboard must not request a management API token")
+	if strings.Contains(text, "X-Management-Key") || strings.Contains(text, "format=fallback-json") {
+		t.Fatal("billing dashboard must use the management center auth contract without fallback credentials")
 	}
 	for _, unexpected := range []string{"价格规则", "保存价格", "数据直接读取自本机插件存储"} {
 		if strings.Contains(text, unexpected) {
@@ -27,6 +27,9 @@ func TestRenderContainsBillingDashboard(t *testing.T) {
 	if strings.Contains(text, `<button class="btn" id="refresh">刷新</button>`) {
 		t.Fatal("billing dashboard must not contain a manual refresh button")
 	}
+	if !strings.Contains(text, `<option value="15" selected>15 秒</option>`) {
+		t.Fatal("billing dashboard must default to 15-second auto refresh")
+	}
 }
 
 func TestRenderContainsSeparateModelCostDashboard(t *testing.T) {
@@ -35,27 +38,30 @@ func TestRenderContainsSeparateModelCostDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, expected := range []string{"CPA 模型费用", "模型价格规则", "保存模型费用", "输入 / 1M", "输出 / 1M", "v0/management/cpa-billing-management/prices", "format=fallback-json", "X-Management-Key", "USD"} {
+	for _, expected := range []string{"CPA 模型费用", "模型价格规则", "同步上游价格", "新增规则", "保存模型费用", "输入 / 1M", "输出 / 1M", "v0/management/cpa-billing-management/prices", "/sync", "placeholder=\"例如：openai/gpt-4o\"", "Number.isFinite", "cli-proxy-auth", "enc::v1::", "Authorization:'Bearer '+MANAGEMENT_KEY", "/management.html#/login", "USD"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("rendered model-cost dashboard does not contain %q", expected)
 		}
 	}
-	for _, unexpected := range []string{"最近事件", "按模型汇总", "管理 API Token"} {
+	for _, unexpected := range []string{"最近事件", "按模型汇总", "X-Management-Key", "format=fallback-json", `id="refresh"`, "model-name"} {
 		if strings.Contains(text, unexpected) {
 			t.Fatalf("model-cost dashboard must not contain %q", unexpected)
 		}
 	}
 }
 
-func TestRenderUsesConfiguredManagementKey(t *testing.T) {
-	raw, err := RenderBilling(Data{ManagementKey: "test-management-secret"})
+func TestRenderDoesNotEmbedManagementKey(t *testing.T) {
+	raw, err := RenderBilling(Data{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, expected := range []string{"test-management-secret", "Authorization", "Bearer '+MANAGEMENT_KEY"} {
+	for _, expected := range []string{"readManagementKey", "AUTH_STORAGE_KEY", "Authorization:'Bearer '+MANAGEMENT_KEY"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("rendered billing dashboard does not contain %q", expected)
 		}
+	}
+	if strings.Contains(text, "test-management-secret") || strings.Contains(text, "management_key") {
+		t.Fatal("rendered billing dashboard must not embed a configured management key")
 	}
 }

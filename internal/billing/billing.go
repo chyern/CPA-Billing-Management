@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -140,15 +141,14 @@ type Summary struct {
 }
 
 type Store struct {
-	mu            sync.RWMutex
-	dataDir       string
-	state         State
-	lastErr       error
-	managementKey string
+	mu      sync.RWMutex
+	dataDir string
+	state   State
+	lastErr error
 }
 
 func DefaultRules() []PriceRule {
-	return []PriceRule{{Match: "*"}}
+	return []PriceRule{}
 }
 
 func NewStore(dataDir string) (*Store, error) {
@@ -205,9 +205,7 @@ func (s *Store) load() error {
 	if loaded.Currency == "" {
 		loaded.Currency = defaultCurrency
 	}
-	if len(loaded.Rules) == 0 {
-		loaded.Rules = DefaultRules()
-	}
+	loaded.Rules = removeLegacyDefaultRules(loaded.Rules)
 	if loaded.Aggregates == nil {
 		loaded.Aggregates = map[string]*Aggregate{}
 	}
@@ -502,9 +500,6 @@ func (s *Store) Rules() []PriceRule {
 }
 
 func (s *Store) SetRules(rules []PriceRule) error {
-	if len(rules) == 0 {
-		return fmt.Errorf("at least one pricing rule is required")
-	}
 	seen := make(map[string]struct{}, len(rules))
 	for i := range rules {
 		rules[i].Match = strings.TrimSpace(rules[i].Match)
@@ -516,19 +511,34 @@ func (s *Store) SetRules(rules []PriceRule) error {
 			return fmt.Errorf("duplicate pricing rule %q", rules[i].Match)
 		}
 		seen[key] = struct{}{}
-		if rules[i].InputPerMillion < 0 || rules[i].OutputPerMillion < 0 || rules[i].CacheReadPerMillion < 0 || rules[i].CacheCreationPerMillion < 0 {
-			return fmt.Errorf("pricing rule %q contains a negative price", rules[i].Match)
+		prices := []float64{rules[i].InputPerMillion, rules[i].OutputPerMillion, rules[i].CacheReadPerMillion, rules[i].CacheCreationPerMillion}
+		for _, price := range prices {
+			if math.IsNaN(price) || math.IsInf(price, 0) || price < 0 {
+				return fmt.Errorf("pricing rule %q contains an invalid price", rules[i].Match)
+			}
 		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.state.Rules = append([]PriceRule(nil), rules...)
+	s.state.Rules = append([]PriceRule{}, rules...)
 	s.recalculateLocked()
 	if err := s.persistLocked(); err != nil {
 		s.lastErr = err
 		return err
 	}
 	return nil
+}
+
+func removeLegacyDefaultRules(rules []PriceRule) []PriceRule {
+	filtered := make([]PriceRule, 0, len(rules))
+	for _, rule := range rules {
+		match := strings.ToLower(strings.TrimSpace(rule.Match))
+		if (match == "*" || match == "model-name") && rule.InputPerMillion == 0 && rule.OutputPerMillion == 0 && rule.CacheReadPerMillion == 0 && rule.CacheCreationPerMillion == 0 {
+			continue
+		}
+		filtered = append(filtered, rule)
+	}
+	return filtered
 }
 
 func (s *Store) recalculateLocked() {
@@ -590,33 +600,21 @@ func (s *Store) Currency() string {
 func (s *Store) ConfigureYAML(raw []byte) {
 	// The host sends plugin configuration as YAML. Pricing rules stay editable
 	// through the model-cost page and are persisted in the plugin state file.
-	var currency, managementKey string
+	var currency string
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "currency:") {
 			currency = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "currency:")), "\"'")
 		}
-		if strings.HasPrefix(line, "management_key:") {
-			managementKey = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "management_key:")), "\"'")
-		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.managementKey = managementKey
 	if currency != "" {
 		s.state.Currency = currency
 		if err := s.persistLocked(); err != nil {
 			s.lastErr = err
 		}
 	}
-}
-
-// ManagementKey returns the optional key configured for resource-page API
-// requests. It is kept in memory and is never persisted with billing data.
-func (s *Store) ManagementKey() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.managementKey
 }
 
 func (s *Store) LastError() string {

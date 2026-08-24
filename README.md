@@ -11,6 +11,7 @@ CLIProxyAPI 自定义插件：接收 usage 事件，优先使用上游金额，�
 - 将账单状态持久化到插件数据目录，默认是操作系统用户配置目录下的 `cliproxyapi/cpa-billing-management`；
 - 在 CLIProxyAPI 管理页增加“费用统计”菜单，展示总费用、按模型汇总、按脱敏 API Key 汇总，以及最近请求的总耗时和首 Token 耗时；最近事件支持分页和可选的 5/10/15 秒自动刷新；
 - 在独立的“模型费用”页面编辑价格规则；未匹配价格的事件费用为 0，并标记为“未配置模型费用”。
+- 模型费用页默认不添加价格规则；支持从 [LiteLLM 公共模型价格目录](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json) 同步当前已使用且可识别的模型，未识别的模型仍可手动配置。
 
 当前 CLIProxyAPI 的 `UsagePlugin` ABI 主要提供 token、耗时等字段，通常不包含金额，因此大多数文本模型会走模型价格估算。价格单位是配置币种/每百万 token，估算结果请以供应商账单为准。
 
@@ -57,8 +58,6 @@ plugins:
       enabled: true
       priority: 1
       currency: USD
-      # 可选：资源页调用管理 API 的 Bearer 管理密钥
-      # management_key: replace-with-management-key
 ```
 
 如果需要指定账单数据目录，可以设置环境变量：
@@ -85,6 +84,7 @@ make install-local \\
 - `GET /v0/management/cpa-billing-management/summary`
 - `GET /v0/management/cpa-billing-management/prices`
 - `PUT /v0/management/cpa-billing-management/prices`
+- `POST /v0/management/cpa-billing-management/prices/sync`
 - `POST /v0/management/cpa-billing-management/reset`
 
 插件资源页面为：
@@ -95,8 +95,8 @@ make install-local \\
 
 `/v0/resource/plugins/cpa-billing-management/pricing`
 
-资源页面优先通过带管理认证的 API 加载数据；CLIProxyAPI 的资源 iframe 本身不会注入管理密钥，
-在这种情况下页面会回退到资源路由的只读 `format=fallback-json` 响应，以避免出现
-“missing management key”。模型费用写入仍走带管理认证的 API。带管理认证的 API 仍保留给外部自动化使用；
-若 CLIProxyAPI 对公网开放，仍应按 CLIProxyAPI 的部署方式保护管理 API 和插件资源路由。
-`management_key` 会仅在资源页 HTML 中用于附加 Bearer 请求头，不会写入账单状态文件；请只在受信任的管理中心环境中配置。
+资源页面会复用 CLIProxyAPI 管理中心的浏览器登录状态：从同源 `localStorage` 的
+`cli-proxy-auth` 读取管理密钥，兼容管理中心的 `enc::v1::` 混淆格式，并通过
+`Authorization: Bearer <management-key>` 调用插件管理 API。管理中心勾选“记住密码”后，
+重新打开资源页会自动恢复；管理密钥缺失或 API 返回 401 时，页面会跳转到
+`/management.html#/login`。插件不再在配置或资源 HTML 中注入第二份管理密钥。

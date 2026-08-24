@@ -56,6 +56,10 @@ func main() {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(updated)
 			return
+		case "/v0/management/cpa-billing-management/prices/sync":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"source": "preview", "matched": 0, "added": 0, "updated": 0, "rules": rules})
+			return
 		case "/v0/management/cpa-billing-management/prices":
 			if r.Method == http.MethodPut {
 				var payload struct {

@@ -7,11 +7,23 @@ import (
 )
 
 type Data struct {
-	Summary       any    `json:"summary,omitempty"`
-	Rules         any    `json:"rules,omitempty"`
-	Currency      any    `json:"currency,omitempty"`
-	ManagementKey string `json:"management_key,omitempty"`
+	Summary  any `json:"summary,omitempty"`
+	Rules    any `json:"rules,omitempty"`
+	Currency any `json:"currency,omitempty"`
 }
+
+// managementAuthScript mirrors the CLIProxyAPI management center's browser
+// credential contract. The panel persists its Zustand auth state under
+// cli-proxy-auth and wraps the JSON in enc::v1::<base64 XOR payload>. The
+// resource page is served from the same origin, so it can reuse that state
+// without receiving a second copy of the management key in its HTML.
+const managementAuthScript = `
+const AUTH_STORAGE_KEY='cli-proxy-auth'; const AUTH_LOGIN_MARKER='isLoggedIn'; const AUTH_PREFIX='enc::v1::'; const AUTH_SALT='cli-proxy-api-webui::secure-storage';
+function readManagementKey(){try{if(localStorage.getItem(AUTH_LOGIN_MARKER)!=='true')return '';const raw=localStorage.getItem(AUTH_STORAGE_KEY);if(!raw)return '';let json=raw;if(raw.startsWith(AUTH_PREFIX)){const binary=atob(raw.slice(AUTH_PREFIX.length));const encrypted=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)encrypted[i]=binary.charCodeAt(i);const key=new TextEncoder().encode(AUTH_SALT+'|'+window.location.host+'|'+navigator.userAgent);const plain=new Uint8Array(encrypted.length);for(let i=0;i<encrypted.length;i++)plain[i]=encrypted[i]^key[i%key.length];json=new TextDecoder().decode(plain)}const payload=JSON.parse(json);const state=payload&&typeof payload==='object'&&payload.state&&typeof payload.state==='object'?payload.state:payload;return typeof state.managementKey==='string'?state.managementKey.trim():''}catch(_){return ''}}
+const ENFORCE_MANAGEMENT_AUTH=window.location.pathname.startsWith('/v0/resource/plugins/'); const MANAGEMENT_KEY=readManagementKey(); const authHeaders=()=>MANAGEMENT_KEY?{Authorization:'Bearer '+MANAGEMENT_KEY}:{};
+function redirectToManagementLogin(){const target=new URL('/management.html#/login',window.location.origin).href;try{if(window.top&&window.top!==window){window.top.location.href=target;return}}catch(_){}window.location.replace(target)}
+function requireManagementKey(){if(ENFORCE_MANAGEMENT_AUTH&&!MANAGEMENT_KEY){redirectToManagementLogin();return false}return true}
+`
 
 const styles = `
 :root{color-scheme:light dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f5f7fb;color:#182230}
@@ -28,15 +40,15 @@ func RenderBilling(data Data) ([]byte, error) {
 	page := `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CPA 费用统计</title><style>` + styles + `</style></head><body>
-<div class="header"><div><h1>CPA 费用统计</h1><div class="muted">上游明确返回金额时优先使用，否则按“模型费用”中的每百万 token 价格估算</div></div><div class="toolbar"><span class="muted">自动刷新</span><select id="autoRefresh" aria-label="自动刷新"><option value="0">不刷新</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="15">15 秒</option></select><span id="status" class="muted status"></span></div></div>
+<div class="header"><div><h1>CPA 费用统计</h1><div class="muted">上游明确返回金额时优先使用，否则按“模型费用”中的每百万 token 价格估算</div></div><div class="toolbar"><span class="muted">自动刷新</span><select id="autoRefresh" aria-label="自动刷新"><option value="0">不刷新</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="15" selected>15 秒</option></select><span id="status" class="muted status"></span></div></div>
 <section id="cards" class="grid"></section>
 <section class="panel"><h2>按模型汇总</h2><div id="models"></div></section>
 <section class="panel"><h2>按 API Key 汇总</h2><div id="apiKeys"></div></section>
 <section class="panel"><h2>最近事件</h2><div id="events"></div></section>
 <div class="footer">CPA Billing Management · 模型费用为估算值，请以供应商账单为准</div>
 <script id="initial" type="application/json">` + initial + `</script>
-<script>
-const BASE='/v0/management/cpa-billing-management/summary'; const PAGE_SIZE=20; const MANAGEMENT_KEY=JSON.parse(document.getElementById('initial').textContent).management_key||''; let refreshTimer=null;
+	<script>` + managementAuthScript + `
+	const BASE='/v0/management/cpa-billing-management/summary'; const PAGE_SIZE=20; let refreshTimer=null;
 let state=JSON.parse(document.getElementById('initial').textContent).summary||{currency:'USD',totals:{},models:[],api_keys:[],recent_events:[],recent_events_total:0,recent_events_page:1,recent_events_pages:1,recent_events_page_size:PAGE_SIZE};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const n=x=>Number(x||0).toLocaleString('zh-CN'); const money=x=>esc(state.currency||'USD')+' '+Number(x||0).toFixed(6);
@@ -46,9 +58,11 @@ const models=state.models||[];document.getElementById('models').innerHTML=models
 const apiKeys=state.api_keys||[];document.getElementById('apiKeys').innerHTML=apiKeys.length?'<table><thead><tr><th>API Key</th><th class="num">请求</th><th class="num">失败</th><th class="num">输入</th><th class="num">缓存</th><th class="num">输出</th><th class="num">总 token</th><th class="num">费用</th></tr></thead><tbody>'+apiKeys.map(k=>'<tr><td>'+esc(k.api_key||'未提供')+'</td><td class="num">'+n(k.requests)+'</td><td class="num">'+n(k.failed_requests)+'</td><td class="num">'+n(k.input_tokens)+'</td><td class="num">'+n(k.cached_tokens)+'</td><td class="num">'+n(k.output_tokens)+'</td><td class="num">'+n(k.total_tokens)+'</td><td class="num">'+money(k.cost)+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">暂无 API Key 数据</div>';
 const eventTable=(state.recent_events||[]).length?'<table><thead><tr><th>时间</th><th>模型</th><th>API Key</th><th class="num">耗时/首字</th><th class="num">输入</th><th class="num">缓存</th><th class="num">输出</th><th class="num">费用</th><th>状态</th></tr></thead><tbody>'+state.recent_events.slice().reverse().map(e=>'<tr><td>'+esc(new Date(e.requested_at).toLocaleString())+'</td><td>'+esc(e.model||'-')+'</td><td>'+esc(e.api_key||'-')+'</td><td class="num">'+duration(e.latency_ns)+' / '+duration(e.ttft_ns)+'</td><td class="num">'+n(e.input_tokens)+'</td><td class="num">'+n(e.cached_tokens)+'</td><td class="num">'+n(e.output_tokens)+'</td><td class="num">'+money(e.cost)+'</td><td>'+(e.failed?'<span class="pill">失败</span>':'成功')+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">暂无最近事件</div>'; const page=Number(state.recent_events_page||1), pages=Math.max(1,Number(state.recent_events_pages||1)), total=Number(state.recent_events_total||0); document.getElementById('events').innerHTML=eventTable+'<div class="pager"><button class="btn" id="prevPage" '+(page<=1?'disabled':'')+'>上一页</button><span class="muted">第 '+page+' / '+pages+' 页 · 共 '+n(total)+' 条</span><button class="btn" id="nextPage" '+(page>=pages?'disabled':'')+'>下一页</button></div>'; document.getElementById('prevPage').onclick=()=>loadPage(page-1); document.getElementById('nextPage').onclick=()=>loadPage(page+1)}
 function status(msg,error){const el=document.getElementById('status');el.textContent=msg;el.className='muted status'+(error?' error':'')}
-const authHeaders=()=>MANAGEMENT_KEY?{Authorization:'Bearer '+MANAGEMENT_KEY,'X-Management-Key':MANAGEMENT_KEY}:{};
-async function loadPage(page){const pageNumber=Math.max(1,page);try{const res=await fetch(BASE+'?page='+pageNumber+'&page_size='+PAGE_SIZE,{credentials:'same-origin',headers:authHeaders()});if(!res.ok)throw new Error(await res.text()||res.statusText);const payload=await res.json();state=payload.summary||payload;render();status('已更新');return}catch(primaryError){try{const fallback=await fetch('/v0/resource/plugins/cpa-billing-management/billing?format=fallback-json&page='+pageNumber+'&page_size='+PAGE_SIZE,{credentials:'same-origin'});if(!fallback.ok)throw new Error(await fallback.text()||fallback.statusText);const payload=await fallback.json();state=payload.summary||payload;render();status('已更新')}catch(fallbackError){status('更新失败：'+(fallbackError.message||primaryError.message),true)}}}
-document.getElementById('autoRefresh').onchange=e=>{if(refreshTimer)clearInterval(refreshTimer);refreshTimer=null;const seconds=Number(e.target.value);if(seconds>0)refreshTimer=setInterval(()=>loadPage(Number(state.recent_events_page||1)),seconds*1000)}; render();
+	async function loadPage(page){if(!requireManagementKey())return;const pageNumber=Math.max(1,page);try{const res=await fetch(BASE+'?page='+pageNumber+'&page_size='+PAGE_SIZE,{credentials:'same-origin',headers:authHeaders()});if(res.status===401){redirectToManagementLogin();return}if(!res.ok)throw new Error(await res.text()||res.statusText);const payload=await res.json();state=payload.summary||payload;render();status('已更新')}catch(error){status('更新失败：'+(error.message||'请求失败'),true)}}
+const autoRefresh=document.getElementById('autoRefresh');
+function configureAutoRefresh(seconds){if(refreshTimer)clearInterval(refreshTimer);refreshTimer=null;if(seconds>0)refreshTimer=setInterval(()=>loadPage(Number(state.recent_events_page||1)),seconds*1000)}
+autoRefresh.onchange=e=>configureAutoRefresh(Number(e.target.value));
+configureAutoRefresh(Number(autoRefresh.value)); render();
 loadPage(Number(state.recent_events_page||1));
 </script></body></html>`
 	return []byte(page), nil
@@ -62,22 +76,25 @@ func RenderPricing(data Data) ([]byte, error) {
 	page := `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CPA 模型费用</title><style>` + styles + `</style></head><body>
-<div class="header"><div><h1>CPA 模型费用</h1><div class="muted">配置模型每百万 token 的估算价格；上游明确返回金额时不会被这里的规则覆盖</div></div><div class="toolbar"><span id="status" class="muted status"></span><button class="btn" id="refresh">刷新</button></div></div>
-<section class="panel"><h2>模型价格规则</h2><p class="muted">匹配优先级：provider/model → model → alias → *。价格单位为当前币种 / 1M token，保存后会重新计算无上游金额的历史事件。</p><div id="rules" class="rules"></div><div class="actions"><button class="btn" id="add">新增规则</button><button class="btn primary" id="save">保存模型费用</button></div></section>
+<div class="header"><div><h1>CPA 模型费用</h1><div class="muted">配置模型每百万 token 的估算价格；上游明确返回金额时不会被这里的规则覆盖</div></div><div class="toolbar"><span id="status" class="muted status"></span></div></div>
+<section class="panel"><h2>模型价格规则</h2><p class="muted">匹配优先级：provider/model → model → alias → *。价格单位为当前币种 / 1M token，保存后会重新计算无上游金额的历史事件。</p><div id="rules" class="rules"></div><div class="actions"><button class="btn" id="sync">同步上游价格</button><button class="btn" id="add">新增规则</button><button class="btn primary" id="save">保存模型费用</button></div></section>
 <div class="footer">CPA Billing Management · 当前币种：<span id="currency"></span> · 估算费用仅供参考</div>
 <script id="initial" type="application/json">` + initial + `</script>
-<script>
-const BASE='/v0/management/cpa-billing-management/prices';
-const initial=JSON.parse(document.getElementById('initial').textContent); const MANAGEMENT_KEY=initial.management_key||''; const authHeaders=()=>MANAGEMENT_KEY?{Authorization:'Bearer '+MANAGEMENT_KEY,'X-Management-Key':MANAGEMENT_KEY}:{}; let rules=initial.rules||[];document.getElementById('currency').textContent=initial.currency||'USD';
+	<script>` + managementAuthScript + `
+	const BASE='/v0/management/cpa-billing-management/prices'; const SYNC_BASE=BASE+'/sync';
+	const initial=JSON.parse(document.getElementById('initial').textContent); let rules=initial.rules||[];document.getElementById('currency').textContent=initial.currency||'USD';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function render(){document.getElementById('rules').innerHTML='<table><thead><tr><th>匹配</th><th class="num">输入 / 1M</th><th class="num">输出 / 1M</th><th class="num">缓存读取 / 1M</th><th class="num">缓存创建 / 1M</th><th></th></tr></thead><tbody>'+rules.map((r,i)=>'<tr data-i="'+i+'"><td><input class="match" data-k="match" value="'+esc(r.match)+'"></td><td><input data-k="input_per_million" type="number" min="0" step="0.000001" value="'+Number(r.input_per_million||0)+'"></td><td><input data-k="output_per_million" type="number" min="0" step="0.000001" value="'+Number(r.output_per_million||0)+'"></td><td><input data-k="cache_read_per_million" type="number" min="0" step="0.000001" value="'+Number(r.cache_read_per_million||0)+'"></td><td><input data-k="cache_creation_per_million" type="number" min="0" step="0.000001" value="'+Number(r.cache_creation_per_million||0)+'"></td><td><button class="btn danger" onclick="removeRule('+i+')">删除</button></td></tr>').join('')+'</tbody></table>'}
+const priceFields=['input_per_million','output_per_million','cache_read_per_million','cache_creation_per_million'];
+const valueFor=(rule,key)=>rule._draft||rule[key]==null||!Number.isFinite(Number(rule[key]))?'':Number(rule[key]);
+function render(){document.getElementById('rules').innerHTML='<table><thead><tr><th>匹配</th><th class="num">输入 / 1M</th><th class="num">输出 / 1M</th><th class="num">缓存读取 / 1M</th><th class="num">缓存创建 / 1M</th><th></th></tr></thead><tbody>'+rules.map((r,i)=>'<tr data-i="'+i+'"><td><input class="match" data-k="match" placeholder="例如：openai/gpt-4o" value="'+(r._draft?'':esc(r.match))+'"></td><td><input data-k="input_per_million" type="number" min="0" step="0.000001" placeholder="例如：2.5" value="'+valueFor(r,'input_per_million')+'"></td><td><input data-k="output_per_million" type="number" min="0" step="0.000001" placeholder="例如：10" value="'+valueFor(r,'output_per_million')+'"></td><td><input data-k="cache_read_per_million" type="number" min="0" step="0.000001" placeholder="例如：0.25" value="'+valueFor(r,'cache_read_per_million')+'"></td><td><input data-k="cache_creation_per_million" type="number" min="0" step="0.000001" placeholder="例如：0.25" value="'+valueFor(r,'cache_creation_per_million')+'"></td><td><button class="btn danger" onclick="removeRule('+i+')">删除</button></td></tr>').join('')+'</tbody></table>'}
 window.removeRule=i=>{rules.splice(i,1);render()};
-function readRules(){document.querySelectorAll('#rules tbody tr').forEach(row=>{const i=Number(row.dataset.i);row.querySelectorAll('input').forEach(input=>{const k=input.dataset.k;rules[i][k]=k==='match'?input.value:Number(input.value||0)})})}
+function readRules(){document.querySelectorAll('#rules tbody tr').forEach(row=>{const i=Number(row.dataset.i);row.querySelectorAll('input').forEach(input=>{const k=input.dataset.k;const value=input.value.trim();rules[i][k]=k==='match'?value:(value===''?NaN:Number(value))});delete rules[i]._draft})}
+function validateRules(){const seen=new Set();for(let i=0;i<rules.length;i++){const rule=rules[i],match=String(rule.match||'').trim(),key=match.toLowerCase();if(!match)return '第 '+(i+1)+' 条规则的匹配不能为空';if(seen.has(key))return '第 '+(i+1)+' 条规则与其他规则重复：'+match;seen.add(key);for(const field of priceFields){if(!Number.isFinite(rule[field])||rule[field]<0)return '第 '+(i+1)+' 条规则的价格必须是大于等于 0 的有效数字'}}return ''}
 function status(msg,error){const el=document.getElementById('status');el.textContent=msg;el.className='muted status'+(error?' error':'')}
-async function api(opts={}){const request=Object.assign({credentials:'same-origin',headers:{'Content-Type':'application/json',...authHeaders()}},opts);try{const res=await fetch(BASE,request);if(!res.ok)throw new Error(await res.text()||res.statusText);return res.json()}catch(primaryError){if((request.method||'GET').toUpperCase()!=='GET')throw primaryError;const fallback=await fetch('/v0/resource/plugins/cpa-billing-management/pricing?format=fallback-json',{credentials:'same-origin'});if(!fallback.ok)throw primaryError;return fallback.json()}}
-document.getElementById('refresh').onclick=async()=>{try{const data=await api();rules=data.rules||[];document.getElementById('currency').textContent=data.currency||'USD';render();status('已刷新')}catch(e){status('刷新失败：'+e.message,true)}};
-document.getElementById('add').onclick=()=>{readRules();rules.push({match:'model-name',input_per_million:0,output_per_million:0,cache_read_per_million:0,cache_creation_per_million:0});render()};
-document.getElementById('save').onclick=async()=>{try{readRules();const data=await api({method:'PUT',body:JSON.stringify({rules})});rules=data.rules||rules;render();status('模型费用已保存，历史估算已更新')}catch(e){status('保存失败：'+e.message,true)}};render();
+	async function api(url=BASE,opts={}){if(!requireManagementKey())throw new Error('管理中心登录已失效');const request=Object.assign({credentials:'same-origin',headers:{'Content-Type':'application/json',...authHeaders()}},opts);const res=await fetch(url,request);if(res.status===401){redirectToManagementLogin();throw new Error('管理中心登录已失效')}if(!res.ok)throw new Error(await res.text()||res.statusText);return res.json()}
+document.getElementById('sync').onclick=async()=>{try{const data=await api(SYNC_BASE,{method:'POST'});rules=data.rules||rules;render();status('已同步 '+Number(data.matched||0)+' 个模型')}catch(e){status('同步失败：'+e.message,true)}};
+document.getElementById('add').onclick=()=>{readRules();rules.push({_draft:true,match:'',input_per_million:null,output_per_million:null,cache_read_per_million:null,cache_creation_per_million:null});render()};
+document.getElementById('save').onclick=async()=>{try{readRules();const validationError=validateRules();if(validationError){status('保存失败：'+validationError,true);return}const data=await api(BASE,{method:'PUT',body:JSON.stringify({rules})});rules=data.rules||rules;render();status('模型费用已保存，历史估算已更新')}catch(e){status('保存失败：'+e.message,true)}};render();
 api().then(data=>{rules=data.rules||[];document.getElementById('currency').textContent=data.currency||'USD';render();status('已更新')}).catch(e=>status('加载失败：'+e.message,true));
 </script></body></html>`
 	return []byte(page), nil

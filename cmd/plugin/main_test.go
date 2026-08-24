@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
@@ -26,14 +27,14 @@ func TestPluginBillingFlow(t *testing.T) {
 	if !resultContains(t, registerRaw, `"usage_plugin":true`) || !resultContains(t, registerRaw, `"management_api":true`) {
 		t.Fatalf("registration is missing billing capabilities: %s", registerRaw)
 	}
-	if !resultContains(t, registerRaw, `"management_key"`) {
-		t.Fatalf("registration is missing the optional management key config field: %s", registerRaw)
+	if resultContains(t, registerRaw, `"management_key"`) {
+		t.Fatalf("registration must not expose a second management key config field: %s", registerRaw)
 	}
 	managementRegisterRaw, err := handleMethod(abi.MethodManagementRegister, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !resultContains(t, managementRegisterRaw, `"Menu":"费用统计"`) || !resultContains(t, managementRegisterRaw, `"Menu":"模型费用"`) || !resultContains(t, managementRegisterRaw, `cpa-billing-management/prices`) {
+	if !resultContains(t, managementRegisterRaw, `"Menu":"费用统计"`) || !resultContains(t, managementRegisterRaw, `"Menu":"模型费用"`) || !resultContains(t, managementRegisterRaw, `cpa-billing-management/prices`) || !resultContains(t, managementRegisterRaw, `cpa-billing-management/prices/sync`) {
 		t.Fatalf("management registration is missing billing or model-cost routes: %s", managementRegisterRaw)
 	}
 	if err := store.SetRules([]billing.PriceRule{{Match: "test-model", InputPerMillion: 1, OutputPerMillion: 2}}); err != nil {
@@ -133,8 +134,8 @@ func TestPluginBillingFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := managementStatus(t, refreshRaw); got != http.StatusNotFound {
-		t.Fatalf("billing resource JSON status = %d, want %d", got, http.StatusNotFound)
+	if got := managementStatus(t, refreshRaw); got != http.StatusUnauthorized {
+		t.Fatalf("billing resource JSON status = %d, want %d", got, http.StatusUnauthorized)
 	}
 	fallbackReq, _ := json.Marshal(abi.ManagementRequest{
 		Method: http.MethodGet,
@@ -145,14 +146,8 @@ func TestPluginBillingFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var fallbackSnapshot struct {
-		Summary billing.Summary `json:"summary"`
-	}
-	if err := json.Unmarshal(managementBody(t, fallbackRaw), &fallbackSnapshot); err != nil {
-		t.Fatal(err)
-	}
-	if fallbackSnapshot.Summary.RecentEventsPage != 2 || fallbackSnapshot.Summary.RecentEventsPageSize != 1 {
-		t.Fatalf("resource fallback summary page = %+v", fallbackSnapshot.Summary)
+	if got := managementStatus(t, fallbackRaw); got != http.StatusUnauthorized {
+		t.Fatalf("billing resource fallback status = %d, want %d", got, http.StatusUnauthorized)
 	}
 	managementRefreshReq, _ := json.Marshal(abi.ManagementRequest{
 		Method: http.MethodGet,
@@ -193,22 +188,16 @@ func TestPluginBillingFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := managementStatus(t, pricingJSONRaw); got != http.StatusNotFound {
-		t.Fatalf("pricing resource JSON status = %d, want %d", got, http.StatusNotFound)
+	if got := managementStatus(t, pricingJSONRaw); got != http.StatusUnauthorized {
+		t.Fatalf("pricing resource JSON status = %d, want %d", got, http.StatusUnauthorized)
 	}
 	pricingFallbackReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodGet, Path: pricingPath, Query: map[string][]string{"format": {"fallback-json"}}})
 	pricingFallbackRaw, err := handleMethod(abi.MethodManagementHandle, pricingFallbackReq)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var pricingFallback struct {
-		Rules []billing.PriceRule `json:"rules"`
-	}
-	if err := json.Unmarshal(managementBody(t, pricingFallbackRaw), &pricingFallback); err != nil {
-		t.Fatal(err)
-	}
-	if len(pricingFallback.Rules) != 1 || pricingFallback.Rules[0].Match != "test-model" {
-		t.Fatalf("pricing resource fallback = %+v", pricingFallback.Rules)
+	if got := managementStatus(t, pricingFallbackRaw); got != http.StatusUnauthorized {
+		t.Fatalf("pricing resource fallback status = %d, want %d", got, http.StatusUnauthorized)
 	}
 
 	localPricesBody, _ := json.Marshal(map[string]any{"rules": []billing.PriceRule{{Match: "test-model", InputPerMillion: 3, OutputPerMillion: 6}}})
@@ -243,6 +232,31 @@ func TestPluginBillingFlow(t *testing.T) {
 	}
 	if summary.Totals.Cost != 12 {
 		t.Fatalf("recalculated hybrid cost = %v, want upstream 3 plus model estimate 9", summary.Totals.Cost)
+	}
+}
+
+func TestSyncUpstreamPricesAddsMatchedModels(t *testing.T) {
+	store, err := billing.NewStore(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.HandleUsage(billing.UsageRecord{Provider: "openai", Model: "gpt-4o", InputTokens: 10, OutputTokens: 5, TotalTokens: 15})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"gpt-4o":{"input_cost_per_token":0.0000025,"output_cost_per_token":0.00001,"cache_read_input_token_cost":0.000001}}`))
+	}))
+	defer server.Close()
+
+	result, err := syncUpstreamPricesWithClient(store, server.Client(), server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Matched != 1 || result.Added != 1 {
+		t.Fatalf("sync result = %+v, want one matched and added model", result)
+	}
+	rules := store.Rules()
+	if len(rules) != 1 || rules[0].Match != "openai/gpt-4o" || rules[0].InputPerMillion != 2.5 || rules[0].CacheReadPerMillion != 1 {
+		t.Fatalf("synced rules = %+v", rules)
 	}
 }
 

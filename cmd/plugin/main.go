@@ -53,7 +53,7 @@ import (
 
 const (
 	pluginID      = "cpa-billing-management"
-	pluginVersion = "0.1.8"
+	pluginVersion = "0.1.9"
 	resourcePath  = "/v0/resource/plugins/" + pluginID + "/billing"
 	pricingPath   = "/v0/resource/plugins/" + pluginID + "/pricing"
 )
@@ -153,6 +153,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 				{Method: http.MethodGet, Path: "/cpa-billing-management/summary"},
 				{Method: http.MethodGet, Path: "/cpa-billing-management/prices"},
 				{Method: http.MethodPut, Path: "/cpa-billing-management/prices"},
+				{Method: http.MethodPost, Path: "/cpa-billing-management/prices/sync"},
 				{Method: http.MethodPost, Path: "/cpa-billing-management/reset"},
 			},
 		})
@@ -173,7 +174,6 @@ func registration() abi.Registration {
 			GitHubRepository: "https://github.com/chyern/CPA-Billing-Management",
 			ConfigFields: []abi.ConfigField{
 				{Name: "currency", Type: "string", Description: "费用展示币种，默认 USD；事件未携带币种时使用此值。"},
-				{Name: "management_key", Type: "string", Description: "填写 CLIProxyAPI 管理中心使用的管理密钥，供资源页调用管理 API；可选，未填写时使用资源页只读回退。"},
 			},
 		},
 		Capabilities: abi.Capabilities{UsagePlugin: true, ManagementAPI: true},
@@ -254,6 +254,12 @@ func handleManagement(store *billing.Store, raw []byte) ([]byte, error) {
 		return jsonManagementResponse(store.SummaryPage(int(page), int(pageSize)))
 	case req.Method == http.MethodGet && strings.HasSuffix(path, "/prices"):
 		return jsonManagementResponse(map[string]any{"currency": store.Currency(), "rules": store.Rules()})
+	case req.Method == http.MethodPost && strings.HasSuffix(path, "/prices/sync"):
+		result, err := syncUpstreamPrices(store)
+		if err != nil {
+			return jsonManagementError(http.StatusBadGateway, err.Error())
+		}
+		return jsonManagementResponse(result)
 	case req.Method == http.MethodPut && strings.HasSuffix(path, "/prices"):
 		var payload struct {
 			Rules []billing.PriceRule `json:"rules"`
@@ -283,19 +289,10 @@ func handleBillingResource(store *billing.Store, req abi.ManagementRequest) ([]b
 	switch method {
 	case http.MethodGet:
 		format := queryValue(req.Query, "format")
-		if strings.EqualFold(format, "json") {
-			return jsonManagementError(http.StatusNotFound, "resource JSON is disabled; use the authenticated management API")
+		if strings.EqualFold(format, "json") || strings.EqualFold(format, "fallback-json") {
+			return jsonManagementError(http.StatusUnauthorized, "management login required")
 		}
-		// Resource pages are intentionally unauthenticated by the host. The
-		// management console iframe therefore cannot attach its management key;
-		// keep an explicit page-only fallback for that case while preserving the
-		// authenticated management endpoint for external callers.
-		if strings.EqualFold(format, "fallback-json") {
-			page := billing.ParseInt(queryValue(req.Query, "page"))
-			pageSize := billing.ParseInt(queryValue(req.Query, "page_size"))
-			return jsonManagementResponse(map[string]any{"summary": store.SummaryPage(int(page), int(pageSize))})
-		}
-		page, err := dashboard.RenderBilling(dashboard.Data{ManagementKey: store.ManagementKey()})
+		page, err := dashboard.RenderBilling(dashboard.Data{})
 		if err != nil {
 			return nil, err
 		}
@@ -313,13 +310,10 @@ func handlePricingResource(store *billing.Store, req abi.ManagementRequest) ([]b
 	switch method {
 	case http.MethodGet:
 		format := queryValue(req.Query, "format")
-		if strings.EqualFold(format, "json") {
-			return jsonManagementError(http.StatusNotFound, "resource JSON is disabled; use the authenticated management API")
+		if strings.EqualFold(format, "json") || strings.EqualFold(format, "fallback-json") {
+			return jsonManagementError(http.StatusUnauthorized, "management login required")
 		}
-		if strings.EqualFold(format, "fallback-json") {
-			return jsonManagementResponse(map[string]any{"currency": store.Currency(), "rules": store.Rules()})
-		}
-		page, err := dashboard.RenderPricing(dashboard.Data{ManagementKey: store.ManagementKey()})
+		page, err := dashboard.RenderPricing(dashboard.Data{})
 		if err != nil {
 			return nil, err
 		}
