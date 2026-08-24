@@ -52,7 +52,8 @@ import (
 
 const (
 	pluginID      = "cpa-billing-management"
-	pluginVersion = "0.1.0"
+	pluginVersion = "0.1.1"
+	resourcePath  = "/v0/resource/plugins/" + pluginID + "/billing"
 )
 
 var (
@@ -224,12 +225,8 @@ func handleManagement(store *billing.Store, raw []byte) ([]byte, error) {
 	}
 	path := strings.TrimRight(req.Path, "/")
 	switch {
-	case path == "/v0/resource/plugins/"+pluginID+"/billing":
-		page, err := dashboard.Render(dashboard.Data{Summary: emptySummary(), Rules: []billing.PriceRule{}})
-		if err != nil {
-			return nil, err
-		}
-		return okEnvelope(abi.ManagementResponse{StatusCode: http.StatusOK, Headers: map[string][]string{"Content-Type": {"text/html; charset=utf-8"}}, Body: page})
+	case path == resourcePath:
+		return handleBillingResource(store, req)
 	case req.Method == http.MethodGet && strings.HasSuffix(path, "/summary"):
 		return jsonManagementResponse(store.Summary())
 	case req.Method == http.MethodGet && strings.HasSuffix(path, "/prices"):
@@ -255,11 +252,54 @@ func handleManagement(store *billing.Store, raw []byte) ([]byte, error) {
 	}
 }
 
-func emptySummary() map[string]any {
-	return map[string]any{
-		"currency": "USD", "totals": map[string]any{}, "models": []any{},
-		"recent_events": []any{}, "unpriced_models": []any{},
+func handleBillingResource(store *billing.Store, req abi.ManagementRequest) ([]byte, error) {
+	method := req.Method
+	if method == "" {
+		method = http.MethodGet
 	}
+	snapshot := func() map[string]any {
+		return map[string]any{"summary": store.Summary(), "rules": store.Rules()}
+	}
+	switch method {
+	case http.MethodGet:
+		if strings.EqualFold(queryValue(req.Query, "format"), "json") {
+			return jsonManagementResponse(snapshot())
+		}
+		page, err := dashboard.Render(dashboard.Data{Summary: store.Summary(), Rules: store.Rules()})
+		if err != nil {
+			return nil, err
+		}
+		return okEnvelope(abi.ManagementResponse{
+			StatusCode: http.StatusOK,
+			Headers: map[string][]string{
+				"Content-Type":  {"text/html; charset=utf-8"},
+				"Cache-Control": {"no-store"},
+			},
+			Body: page,
+		})
+	case http.MethodPut:
+		var payload struct {
+			Rules []billing.PriceRule `json:"rules"`
+		}
+		if err := json.Unmarshal(req.Body, &payload); err != nil {
+			return jsonManagementError(http.StatusBadRequest, err.Error())
+		}
+		if err := store.SetRules(payload.Rules); err != nil {
+			return jsonManagementError(http.StatusBadRequest, err.Error())
+		}
+		return jsonManagementResponse(snapshot())
+	default:
+		return jsonManagementError(http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func queryValue(query map[string][]string, key string) string {
+	for candidate, values := range query {
+		if strings.EqualFold(strings.TrimSpace(candidate), key) && len(values) > 0 {
+			return strings.TrimSpace(values[0])
+		}
+	}
+	return ""
 }
 
 func jsonManagementResponse(value any) ([]byte, error) {
@@ -267,7 +307,7 @@ func jsonManagementResponse(value any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return okEnvelope(abi.ManagementResponse{StatusCode: http.StatusOK, Headers: map[string][]string{"Content-Type": {"application/json"}}, Body: body})
+	return okEnvelope(abi.ManagementResponse{StatusCode: http.StatusOK, Headers: map[string][]string{"Content-Type": {"application/json"}, "Cache-Control": {"no-store"}}, Body: body})
 }
 
 func jsonManagementError(status int, message string) ([]byte, error) {

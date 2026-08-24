@@ -28,8 +28,8 @@ body{margin:0;padding:24px;max-width:1180px;margin-inline:auto}.header{display:f
 @media(prefers-color-scheme:dark){:root{background:#111827;color:#e5e7eb}.card,.panel{background:#1f2937;border-color:#374151}.card .label,.muted,.footer,th{color:#9ca3af}th,td{border-color:#374151}input,.btn{background:#111827;color:#e5e7eb;border-color:#4b5563}.btn.primary{background:#2563eb;color:#fff;border-color:#2563eb}.btn.danger{color:#fca5a5}.notice{background:#172554;color:#bfdbfe}.notice.error{background:#450a0a;color:#fecaca}}
 @media(max-width:760px){body{padding:14px}.header{flex-direction:column}.toolbar,.toolbar input{width:100%}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.card .value{font-size:20px}}
 </style></head><body>
-<div class="header"><div><h1>CPA 费用统计</h1><div class="muted">按 CLIProxyAPI usage 事件计算，价格按每百万 token 计费</div></div><div class="toolbar"><input id="token" type="password" autocomplete="off" placeholder="管理 API Token"><button class="btn" id="refresh">刷新</button></div></div>
-<div id="notice" class="notice">输入管理 API Token 后刷新。账单数据不会嵌入未认证的资源页面。</div>
+<div class="header"><div><h1>CPA 费用统计</h1><div class="muted">按 CLIProxyAPI usage 事件计算，价格按每百万 token 计费</div></div><div class="toolbar"><button class="btn" id="refresh">刷新</button></div></div>
+<div id="notice" class="notice">数据直接读取自本机插件存储。</div>
 <section id="cards" class="grid"></section>
 <section class="panel"><h2>按模型汇总</h2><div id="models"></div></section>
 <section class="panel"><h2>价格规则</h2><p class="muted">匹配优先级：provider/model → model → alias → *。未知模型会使用 * 规则；建议为实际模型配置明确价格。</p><div id="rules" class="rules"></div><div class="actions"><button class="btn" id="add">新增规则</button><button class="btn primary" id="save">保存价格</button></div></section>
@@ -37,7 +37,7 @@ body{margin:0;padding:24px;max-width:1180px;margin-inline:auto}.header{display:f
 <div class="footer">CPA Billing Management · 费用仅供估算，请以供应商账单为准</div>
 <script id="initial" type="application/json">` + initial + `</script>
 <script>
-const BASE='/v0/management/cpa-billing-management';
+const BASE='/v0/resource/plugins/cpa-billing-management/billing';
 const initial=JSON.parse(document.getElementById('initial').textContent); let state=initial.summary; let rules=initial.rules||[];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const n=x=>Number(x||0).toLocaleString('zh-CN'); const money=x=>esc(state.currency||'USD')+' '+Number(x||0).toFixed(6);
@@ -47,10 +47,10 @@ document.getElementById('events').innerHTML=(state.recent_events||[]).length?'<t
 function renderRules(){document.getElementById('rules').innerHTML='<table><thead><tr><th>匹配</th><th class="num">输入 / 1M</th><th class="num">输出 / 1M</th><th class="num">缓存读取 / 1M</th><th class="num">缓存创建 / 1M</th><th></th></tr></thead><tbody>'+rules.map((r,i)=>'<tr data-i="'+i+'"><td><input class="match" data-k="match" value="'+esc(r.match)+'"></td><td><input data-k="input_per_million" type="number" min="0" step="0.000001" value="'+Number(r.input_per_million||0)+'"></td><td><input data-k="output_per_million" type="number" min="0" step="0.000001" value="'+Number(r.output_per_million||0)+'"></td><td><input data-k="cache_read_per_million" type="number" min="0" step="0.000001" value="'+Number(r.cache_read_per_million||0)+'"></td><td><input data-k="cache_creation_per_million" type="number" min="0" step="0.000001" value="'+Number(r.cache_creation_per_million||0)+'"></td><td><button class="btn danger" onclick="removeRule('+i+')">删除</button></td></tr>').join('')+'</tbody></table>';}
 window.removeRule=i=>{rules.splice(i,1);renderRules()};
 function readRules(){document.querySelectorAll('#rules tbody tr').forEach(row=>{const i=Number(row.dataset.i);row.querySelectorAll('input').forEach(input=>{const k=input.dataset.k;rules[i][k]=k==='match'?input.value:Number(input.value||0)})})}
-async function api(path,opts={}){const token=document.getElementById('token').value.trim();const headers=Object.assign({'Content-Type':'application/json'},opts.headers||{});if(token)headers.Authorization='Bearer '+token;const res=await fetch(BASE+path,Object.assign({},opts,{headers}));if(!res.ok)throw new Error(await res.text()||res.statusText);return res.json()}
-document.getElementById('refresh').onclick=async()=>{try{state=await api('/summary');rules=(await api('/prices')).rules||rules;render();notice('已刷新')}catch(e){notice('刷新失败：'+e.message,true)}};
+async function api(path='',opts={}){const headers=Object.assign({'Content-Type':'application/json'},opts.headers||{});const res=await fetch(BASE+path,Object.assign({credentials:'same-origin'},opts,{headers}));if(!res.ok)throw new Error(await res.text()||res.statusText);return res.json()}
+document.getElementById('refresh').onclick=async()=>{try{const data=await api('?format=json');state=data.summary;rules=data.rules||[];render();notice('已从本机存储刷新')}catch(e){notice('刷新失败：'+e.message,true)}};
 document.getElementById('add').onclick=()=>{readRules();rules.push({match:'model-name',input_per_million:0,output_per_million:0,cache_read_per_million:0,cache_creation_per_million:0});renderRules()};
-document.getElementById('save').onclick=async()=>{try{readRules();await api('/prices',{method:'PUT',body:JSON.stringify({rules})});state=await api('/summary');render();notice('价格已保存')}catch(e){notice('保存失败：'+e.message,true)}};
+document.getElementById('save').onclick=async()=>{try{readRules();const data=await api('',{method:'PUT',body:JSON.stringify({rules})});state=data.summary;rules=data.rules||rules;render();notice('价格已保存到本机插件存储')}catch(e){notice('保存失败：'+e.message,true)}};
 function notice(msg,error){const el=document.getElementById('notice');el.textContent=msg;el.className='notice'+(error?' error':'')}; render();
 </script></body></html>`
 	tmpl, err := template.New("dashboard").Parse(page)

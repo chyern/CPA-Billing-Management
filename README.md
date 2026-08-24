@@ -81,4 +81,6 @@ export CPA_BILLING_DATA_DIR=/var/lib/cliproxyapi/billing
 
 `/v0/resource/plugins/cpa-billing-management/billing`
 
-资源页面本身是浏览器可访问资源；修改价格和刷新数据使用管理 API，需要 CLIProxyAPI 管理认证。不要把账单数据目录暴露到公网。
+资源页面直接读取插件本地账单存储，不需要重复输入管理 API Token；刷新和价格修改也通过插件资源路由完成。
+带管理认证的 API 仍保留给外部自动化使用。若 CLIProxyAPI 对公网开放，请同时限制插件资源路由的网络访问，
+因为资源页面会展示账单数据并允许修改本地价格规则。

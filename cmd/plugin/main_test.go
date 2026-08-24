@@ -70,8 +70,45 @@ func TestPluginBillingFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resultContains(t, resourceRaw, "test-model") {
-		t.Fatal("unauthenticated resource page must not embed billing records")
+	resourceBody := managementBody(t, resourceRaw)
+	if !contains(string(resourceBody), "test-model") {
+		t.Fatal("resource page must embed the current local billing snapshot")
+	}
+	if contains(string(resourceBody), "管理 API Token") {
+		t.Fatal("local resource page must not request a management API token")
+	}
+
+	refreshReq, _ := json.Marshal(abi.ManagementRequest{
+		Method: http.MethodGet,
+		Path:   resourcePath,
+		Query:  map[string][]string{"format": {"json"}},
+	})
+	refreshRaw, err := handleMethod(abi.MethodManagementHandle, refreshReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot struct {
+		Summary billing.Summary     `json:"summary"`
+		Rules   []billing.PriceRule `json:"rules"`
+	}
+	if err := json.Unmarshal(managementBody(t, refreshRaw), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Summary.Totals.Cost != 6 || len(snapshot.Rules) != 1 {
+		t.Fatalf("local resource snapshot = %+v, rules = %+v", snapshot.Summary.Totals, snapshot.Rules)
+	}
+
+	localPricesBody, _ := json.Marshal(map[string]any{"rules": []billing.PriceRule{{Match: "test-model", InputPerMillion: 3, OutputPerMillion: 6}}})
+	localPricesReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodPut, Path: resourcePath, Body: localPricesBody})
+	localPricesRaw, err := handleMethod(abi.MethodManagementHandle, localPricesReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(managementBody(t, localPricesRaw), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Summary.Totals.Cost != 9 {
+		t.Fatalf("local price update cost = %v, want 9", snapshot.Summary.Totals.Cost)
 	}
 }
 
