@@ -3,8 +3,10 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/chyern/CPA-Billing-Management/internal/billing"
@@ -27,12 +29,27 @@ func main() {
 			{RequestedAt: time.Now().Add(-2 * time.Minute), Provider: "codex", Model: "gpt-5.5", APIKey: "sk-a••••••demo", LatencyNanos: int64(1450 * time.Millisecond), InputTokens: 18_000, OutputTokens: 2_400, TotalTokens: 20_400, Cost: 0.081},
 			{RequestedAt: time.Now().Add(-7 * time.Minute), Provider: "claude", Model: "claude-sonnet", APIKey: "sk-b••••••test", LatencyNanos: int64(820 * time.Millisecond), InputTokens: 12_000, OutputTokens: 1_800, TotalTokens: 13_800, Failed: true},
 		},
+		RecentEventsTotal: 42, RecentEventsPage: 1, RecentEventsPages: 3, RecentEventsPageSize: 20,
 	}
 	rules := []billing.PriceRule{
 		{Match: "gpt-5.5", InputPerMillion: 2.5, OutputPerMillion: 15, CacheReadPerMillion: 0.25},
 		{Match: "*"},
 	}
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v0/resource/plugins/cpa-billing-management/billing" && r.URL.Query().Get("format") == "json" {
+			page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+			if page < 1 {
+				page = 1
+			}
+			if page > summary.RecentEventsPages {
+				page = summary.RecentEventsPages
+			}
+			updated := summary
+			updated.RecentEventsPage = page
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"summary": updated})
+			return
+		}
 		var page []byte
 		var err error
 		if r.URL.Path == "/pricing" {

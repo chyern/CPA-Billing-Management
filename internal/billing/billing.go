@@ -108,13 +108,17 @@ type State struct {
 }
 
 type Summary struct {
-	Version        int          `json:"version"`
-	Currency       string       `json:"currency"`
-	UpdatedAt      time.Time    `json:"updated_at"`
-	Totals         Totals       `json:"totals"`
-	Models         []*Aggregate `json:"models"`
-	RecentEvents   []UsageEvent `json:"recent_events"`
-	UnpricedModels []string     `json:"unpriced_models"`
+	Version              int          `json:"version"`
+	Currency             string       `json:"currency"`
+	UpdatedAt            time.Time    `json:"updated_at"`
+	Totals               Totals       `json:"totals"`
+	Models               []*Aggregate `json:"models"`
+	RecentEvents         []UsageEvent `json:"recent_events"`
+	RecentEventsTotal    int          `json:"recent_events_total"`
+	RecentEventsPage     int          `json:"recent_events_page"`
+	RecentEventsPages    int          `json:"recent_events_pages"`
+	RecentEventsPageSize int          `json:"recent_events_page_size"`
+	UnpricedModels       []string     `json:"unpriced_models"`
 }
 
 type Store struct {
@@ -324,8 +328,21 @@ func (s *Store) matchRule(record UsageRecord) (PriceRule, bool) {
 }
 
 func (s *Store) Summary() Summary {
+	return s.SummaryPage(1, 20)
+}
+
+func (s *Store) SummaryPage(page, pageSize int) Summary {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	if page < 1 {
+		page = 1
+	}
 	models := make([]*Aggregate, 0, len(s.state.Aggregates))
 	var totals Totals
 	unpriced := make(map[string]struct{})
@@ -345,17 +362,32 @@ func (s *Store) Summary() Summary {
 		}
 	}
 	sort.Slice(models, func(i, j int) bool { return models[i].Cost > models[j].Cost })
-	events := append([]UsageEvent(nil), s.state.Events...)
-	if len(events) > 20 {
-		events = events[len(events)-20:]
+	totalEvents := len(s.state.Events)
+	pages := (totalEvents + pageSize - 1) / pageSize
+	if pages == 0 {
+		pages = 1
 	}
+	if page > pages {
+		page = pages
+	}
+	end := totalEvents - (page-1)*pageSize
+	if end < 0 {
+		end = 0
+	}
+	start := end - pageSize
+	if start < 0 {
+		start = 0
+	}
+	events := append([]UsageEvent(nil), s.state.Events[start:end]...)
 	unpricedModels := make([]string, 0, len(unpriced))
 	for model := range unpriced {
 		unpricedModels = append(unpricedModels, model)
 	}
 	sort.Strings(unpricedModels)
 	return Summary{Version: s.state.Version, Currency: s.state.Currency, UpdatedAt: s.state.UpdatedAt,
-		Totals: totals, Models: models, RecentEvents: events, UnpricedModels: unpricedModels}
+		Totals: totals, Models: models, RecentEvents: events, RecentEventsTotal: totalEvents,
+		RecentEventsPage: page, RecentEventsPages: pages, RecentEventsPageSize: pageSize,
+		UnpricedModels: unpricedModels}
 }
 
 func (s *Store) Rules() []PriceRule {

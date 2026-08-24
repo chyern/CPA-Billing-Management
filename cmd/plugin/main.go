@@ -52,7 +52,7 @@ import (
 
 const (
 	pluginID      = "cpa-billing-management"
-	pluginVersion = "0.1.3"
+	pluginVersion = "0.1.4"
 	resourcePath  = "/v0/resource/plugins/" + pluginID + "/billing"
 	pricingPath   = "/v0/resource/plugins/" + pluginID + "/pricing"
 )
@@ -266,10 +266,13 @@ func handleBillingResource(store *billing.Store, req abi.ManagementRequest) ([]b
 	}
 	switch method {
 	case http.MethodGet:
+		pageNumber := billing.ParseInt(queryValue(req.Query, "page"))
+		pageSize := billing.ParseInt(queryValue(req.Query, "page_size"))
+		summary := store.SummaryPage(int(pageNumber), int(pageSize))
 		if strings.EqualFold(queryValue(req.Query, "format"), "json") {
-			return jsonManagementResponse(map[string]any{"summary": store.Summary()})
+			return jsonManagementResponse(map[string]any{"summary": summary})
 		}
-		page, err := dashboard.RenderBilling(dashboard.Data{Summary: store.Summary()})
+		page, err := dashboard.RenderBilling(dashboard.Data{Summary: summary})
 		if err != nil {
 			return nil, err
 		}

@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -87,6 +88,29 @@ func TestUnknownModelUsesWildcardAndIsMarkedUnpriced(t *testing.T) {
 	}
 	if summary.Totals.Cost != 0 {
 		t.Fatalf("unknown model cost = %v, want 0", summary.Totals.Cost)
+	}
+}
+
+func TestSummaryPagePaginatesRecentEventsNewestFirstByPage(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 45; i++ {
+		store.HandleUsage(UsageRecord{Provider: "test", Model: fmt.Sprintf("event-%02d", i)})
+	}
+
+	first := store.SummaryPage(1, 20)
+	if first.RecentEventsTotal != 45 || first.RecentEventsPages != 3 || first.RecentEventsPage != 1 || first.RecentEventsPageSize != 20 {
+		t.Fatalf("first page metadata = total %d pages %d page %d size %d", first.RecentEventsTotal, first.RecentEventsPages, first.RecentEventsPage, first.RecentEventsPageSize)
+	}
+	if len(first.RecentEvents) != 20 || first.RecentEvents[0].Model != "event-25" || first.RecentEvents[19].Model != "event-44" {
+		t.Fatalf("first page events = %d, first %q, last %q", len(first.RecentEvents), first.RecentEvents[0].Model, first.RecentEvents[len(first.RecentEvents)-1].Model)
+	}
+
+	last := store.SummaryPage(99, 20)
+	if last.RecentEventsPage != 3 || len(last.RecentEvents) != 5 || last.RecentEvents[0].Model != "event-00" || last.RecentEvents[4].Model != "event-04" {
+		t.Fatalf("clamped last page = page %d, events %+v", last.RecentEventsPage, last.RecentEvents)
 	}
 }
 

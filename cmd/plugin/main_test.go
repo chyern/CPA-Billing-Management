@@ -101,7 +101,7 @@ func TestPluginBillingFlow(t *testing.T) {
 	refreshReq, _ := json.Marshal(abi.ManagementRequest{
 		Method: http.MethodGet,
 		Path:   resourcePath,
-		Query:  map[string][]string{"format": {"json"}},
+		Query:  map[string][]string{"format": {"json"}, "page": {"2"}, "page_size": {"1"}},
 	})
 	refreshRaw, err := handleMethod(abi.MethodManagementHandle, refreshReq)
 	if err != nil {
@@ -114,7 +114,7 @@ func TestPluginBillingFlow(t *testing.T) {
 	if err := json.Unmarshal(managementBody(t, refreshRaw), &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Summary.Totals.Cost != 6 || len(snapshot.Rules) != 0 {
+	if snapshot.Summary.Totals.Cost != 6 || snapshot.Summary.RecentEventsTotal != 1 || snapshot.Summary.RecentEventsPage != 1 || snapshot.Summary.RecentEventsPageSize != 1 || len(snapshot.Rules) != 0 {
 		t.Fatalf("local resource snapshot = %+v, rules = %+v", snapshot.Summary.Totals, snapshot.Rules)
 	}
 	billingPutReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodPut, Path: resourcePath, Body: pricesBody})
