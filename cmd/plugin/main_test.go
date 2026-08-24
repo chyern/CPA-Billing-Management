@@ -26,6 +26,13 @@ func TestPluginBillingFlow(t *testing.T) {
 	if !resultContains(t, registerRaw, `"usage_plugin":true`) || !resultContains(t, registerRaw, `"management_api":true`) {
 		t.Fatalf("registration is missing billing capabilities: %s", registerRaw)
 	}
+	managementRegisterRaw, err := handleMethod(abi.MethodManagementRegister, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resultContains(t, managementRegisterRaw, `"Menu":"费用统计"`) || !resultContains(t, managementRegisterRaw, `"Menu":"价格配置"`) {
+		t.Fatalf("management registration is missing separate billing and pricing pages: %s", managementRegisterRaw)
+	}
 
 	if err := store.SetRules([]billing.PriceRule{{Match: "test-model", InputPerMillion: 1, OutputPerMillion: 2}}); err != nil {
 		t.Fatal(err)
@@ -81,6 +88,9 @@ func TestPluginBillingFlow(t *testing.T) {
 	if !contains(string(resourceBody), "API Key") || !contains(string(resourceBody), "耗时") || !contains(string(resourceBody), "latency_ns") {
 		t.Fatal("resource page must show the masked API key and request latency")
 	}
+	if contains(string(resourceBody), "价格规则") || contains(string(resourceBody), "数据直接读取自本机插件存储") {
+		t.Fatal("billing resource page must not contain pricing controls or the local-storage notice")
+	}
 	if contains(string(resourceBody), apiKey) {
 		t.Fatal("resource page must not expose the complete API key")
 	}
@@ -104,12 +114,30 @@ func TestPluginBillingFlow(t *testing.T) {
 	if err := json.Unmarshal(managementBody(t, refreshRaw), &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Summary.Totals.Cost != 6 || len(snapshot.Rules) != 1 {
+	if snapshot.Summary.Totals.Cost != 6 || len(snapshot.Rules) != 0 {
 		t.Fatalf("local resource snapshot = %+v, rules = %+v", snapshot.Summary.Totals, snapshot.Rules)
+	}
+	billingPutReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodPut, Path: resourcePath, Body: pricesBody})
+	billingPutRaw, err := handleMethod(abi.MethodManagementHandle, billingPutReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := managementStatus(t, billingPutRaw); got != http.StatusMethodNotAllowed {
+		t.Fatalf("billing resource PUT status = %d, want %d", got, http.StatusMethodNotAllowed)
+	}
+
+	pricingReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodGet, Path: pricingPath})
+	pricingRaw, err := handleMethod(abi.MethodManagementHandle, pricingReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pricingBody := managementBody(t, pricingRaw)
+	if !contains(string(pricingBody), "CPA 价格配置") || !contains(string(pricingBody), "价格规则") || contains(string(pricingBody), "最近事件") {
+		t.Fatal("pricing resource page must contain only pricing controls")
 	}
 
 	localPricesBody, _ := json.Marshal(map[string]any{"rules": []billing.PriceRule{{Match: "test-model", InputPerMillion: 3, OutputPerMillion: 6}}})
-	localPricesReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodPut, Path: resourcePath, Body: localPricesBody})
+	localPricesReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodPut, Path: pricingPath, Body: localPricesBody})
 	localPricesRaw, err := handleMethod(abi.MethodManagementHandle, localPricesReq)
 	if err != nil {
 		t.Fatal(err)
@@ -117,8 +145,18 @@ func TestPluginBillingFlow(t *testing.T) {
 	if err := json.Unmarshal(managementBody(t, localPricesRaw), &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Summary.Totals.Cost != 9 {
-		t.Fatalf("local price update cost = %v, want 9", snapshot.Summary.Totals.Cost)
+	if len(snapshot.Rules) != 1 || snapshot.Rules[0].InputPerMillion != 3 {
+		t.Fatalf("local price update response = %+v", snapshot.Rules)
+	}
+	summaryRaw, err = handleMethod(abi.MethodManagementHandle, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(managementBody(t, summaryRaw), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary.Totals.Cost != 9 {
+		t.Fatalf("local price update cost = %v, want 9", summary.Totals.Cost)
 	}
 }
 
@@ -152,6 +190,23 @@ func managementBody(t *testing.T, raw []byte) []byte {
 		t.Fatal(err)
 	}
 	return body
+}
+
+func managementStatus(t *testing.T, raw []byte) int {
+	t.Helper()
+	var envelope struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		StatusCode int `json:"StatusCode"`
+	}
+	if err := json.Unmarshal(envelope.Result, &response); err != nil {
+		t.Fatal(err)
+	}
+	return response.StatusCode
 }
 
 func contains(value, expected string) bool {

@@ -32,8 +32,14 @@ func main() {
 		{Match: "gpt-5.5", InputPerMillion: 2.5, OutputPerMillion: 15, CacheReadPerMillion: 0.25},
 		{Match: "*"},
 	}
-	http.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-		page, err := dashboard.Render(dashboard.Data{Summary: summary, Rules: rules})
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		var page []byte
+		var err error
+		if r.URL.Path == "/pricing" {
+			page, err = dashboard.RenderPricing(dashboard.Data{Rules: rules})
+		} else {
+			page, err = dashboard.RenderBilling(dashboard.Data{Summary: summary})
+		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

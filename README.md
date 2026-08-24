@@ -9,7 +9,7 @@ CLIProxyAPI 自定义插件：接收 usage 事件，按模型价格计算费用�
 - 支持 `provider/model`、模型名、alias 和 `*` 通配价格规则；
 - 将账单状态持久化到插件数据目录，默认是操作系统用户配置目录下的 `cliproxyapi/cpa-billing-management`；
 - 在 CLIProxyAPI 管理页增加“费用统计”菜单，展示总费用、按模型汇总，以及最近请求使用的脱敏 API Key 和请求耗时；
-- 在管理页面编辑价格规则；未知模型默认费用为 0，并标记为“未定价”。
+- 在独立的“价格配置”页面编辑价格规则；未知模型默认费用为 0，并标记为“未定价”。
 
 费用公式为：
 
@@ -70,7 +70,7 @@ plugins:
 export CPA_BILLING_DATA_DIR=/var/lib/cliproxyapi/billing
 ```
 
-启动 CLIProxyAPI 后，在管理页进入“费用统计”。管理 API 路由为：
+启动 CLIProxyAPI 后，在管理页进入“费用统计”查看账单，或进入独立的“价格配置”页面维护模型价格。管理 API 路由为：
 
 - `GET /v0/management/cpa-billing-management/summary`
 - `GET /v0/management/cpa-billing-management/prices`
@@ -81,6 +81,10 @@ export CPA_BILLING_DATA_DIR=/var/lib/cliproxyapi/billing
 
 `/v0/resource/plugins/cpa-billing-management/billing`
 
-资源页面直接读取插件本地账单存储，不需要重复输入管理 API Token；刷新和价格修改也通过插件资源路由完成。
+价格配置资源页面为：
+
+`/v0/resource/plugins/cpa-billing-management/pricing`
+
+资源页面直接读取插件本地账单存储，不需要重复输入管理 API Token；账单刷新和价格修改分别通过对应的插件资源路由完成。
 带管理认证的 API 仍保留给外部自动化使用。若 CLIProxyAPI 对公网开放，请同时限制插件资源路由的网络访问，
 因为资源页面会展示账单数据并允许修改本地价格规则。

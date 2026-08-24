@@ -52,8 +52,9 @@ import (
 
 const (
 	pluginID      = "cpa-billing-management"
-	pluginVersion = "0.1.2"
+	pluginVersion = "0.1.3"
 	resourcePath  = "/v0/resource/plugins/" + pluginID + "/billing"
+	pricingPath   = "/v0/resource/plugins/" + pluginID + "/pricing"
 )
 
 var (
@@ -143,7 +144,10 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		return okEnvelope(map[string]any{"accepted": true})
 	case abi.MethodManagementRegister:
 		return okEnvelope(abi.ManagementRegistrationResponse{
-			Resources: []abi.ResourceRoute{{Path: "/billing", Menu: "费用统计", Description: "按模型查看 CLIProxyAPI token 用量和估算费用。"}},
+			Resources: []abi.ResourceRoute{
+				{Path: "/billing", Menu: "费用统计", Description: "按模型查看 CLIProxyAPI token 用量和估算费用。"},
+				{Path: "/pricing", Menu: "价格配置", Description: "配置模型的 token 估算价格。"},
+			},
 			Routes: []abi.ManagementRoute{
 				{Method: http.MethodGet, Path: "/cpa-billing-management/summary"},
 				{Method: http.MethodGet, Path: "/cpa-billing-management/prices"},
@@ -228,6 +232,8 @@ func handleManagement(store *billing.Store, raw []byte) ([]byte, error) {
 	switch {
 	case path == resourcePath:
 		return handleBillingResource(store, req)
+	case path == pricingPath:
+		return handlePricingResource(store, req)
 	case req.Method == http.MethodGet && strings.HasSuffix(path, "/summary"):
 		return jsonManagementResponse(store.Summary())
 	case req.Method == http.MethodGet && strings.HasSuffix(path, "/prices"):
@@ -258,26 +264,37 @@ func handleBillingResource(store *billing.Store, req abi.ManagementRequest) ([]b
 	if method == "" {
 		method = http.MethodGet
 	}
-	snapshot := func() map[string]any {
-		return map[string]any{"summary": store.Summary(), "rules": store.Rules()}
+	switch method {
+	case http.MethodGet:
+		if strings.EqualFold(queryValue(req.Query, "format"), "json") {
+			return jsonManagementResponse(map[string]any{"summary": store.Summary()})
+		}
+		page, err := dashboard.RenderBilling(dashboard.Data{Summary: store.Summary()})
+		if err != nil {
+			return nil, err
+		}
+		return htmlManagementResponse(page)
+	default:
+		return jsonManagementError(http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+func handlePricingResource(store *billing.Store, req abi.ManagementRequest) ([]byte, error) {
+	method := req.Method
+	if method == "" {
+		method = http.MethodGet
+	}
+	snapshot := func() map[string]any { return map[string]any{"currency": store.Currency(), "rules": store.Rules()} }
 	switch method {
 	case http.MethodGet:
 		if strings.EqualFold(queryValue(req.Query, "format"), "json") {
 			return jsonManagementResponse(snapshot())
 		}
-		page, err := dashboard.Render(dashboard.Data{Summary: store.Summary(), Rules: store.Rules()})
+		page, err := dashboard.RenderPricing(dashboard.Data{Rules: store.Rules()})
 		if err != nil {
 			return nil, err
 		}
-		return okEnvelope(abi.ManagementResponse{
-			StatusCode: http.StatusOK,
-			Headers: map[string][]string{
-				"Content-Type":  {"text/html; charset=utf-8"},
-				"Cache-Control": {"no-store"},
-			},
-			Body: page,
-		})
+		return htmlManagementResponse(page)
 	case http.MethodPut:
 		var payload struct {
 			Rules []billing.PriceRule `json:"rules"`
@@ -292,6 +309,17 @@ func handleBillingResource(store *billing.Store, req abi.ManagementRequest) ([]b
 	default:
 		return jsonManagementError(http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+func htmlManagementResponse(page []byte) ([]byte, error) {
+	return okEnvelope(abi.ManagementResponse{
+		StatusCode: http.StatusOK,
+		Headers: map[string][]string{
+			"Content-Type":  {"text/html; charset=utf-8"},
+			"Cache-Control": {"no-store"},
+		},
+		Body: page,
+	})
 }
 
 func queryValue(query map[string][]string, key string) string {
