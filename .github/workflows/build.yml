@@ -2,10 +2,8 @@ name: Build plugin
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
-  workflow_dispatch:
+    tags:
+      - "v*"
 
 jobs:
   test:

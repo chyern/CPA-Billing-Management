@@ -41,8 +41,8 @@ https://raw.githubusercontent.com/chyern/CPA-Billing-Management/main/registry.js
 因此不会消耗 GitHub Releases API 的匿名请求额度。发布新版本时需要同步更新 `registry.json`。
 
 当前发布流程提供 Darwin arm64（Apple Silicon Mac）和 Linux amd64 产物。
-每次推送到 `main`、提交 Pull Request 或手动运行 `Build plugin` 工作流时，也会自动测试并生成这两个平台的临时构建产物；
-推送 `v*` 标签时才会创建正式 GitHub Release。
+本项目的 GitHub Actions 只响应 `v*` 发布标签；推送普通分支、提交 Pull Request 或手动操作不会触发构建。
+推送 `v*` 标签时会自动测试、构建两个平台的产物并创建正式 GitHub Release。
 
 ### 手动安装
 
