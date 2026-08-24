@@ -1,2 +1,23 @@
 /bin/
 /dist/
+Makefile
+
+# Compiled plugin artifacts generated under other directories.
+*.dylib
+*.so
+*.dll
+
+# Local test/runtime data and coverage output.
+coverage.out
+*.coverprofile
+/bin/smoke-data/
+
+# Local configuration and environment files.
+.env
+.env.*
+!.env.example
+
+# Editor and operating-system metadata.
+.DS_Store
+.idea/
+.vscode/

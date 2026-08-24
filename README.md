@@ -70,6 +70,19 @@ plugins:
 export CPA_BILLING_DATA_DIR=/var/lib/cliproxyapi/billing
 ```
 
+### 本地目录安装（开发/快速更新）
+
+如果插件源码就在本机，不需要通过插件商店下载。先构建并运行 ABI 冒烟测试，再把版本化插件文件复制到 CLIProxyAPI 的本地插件目录：
+
+```bash
+make smoke
+make install-local \\
+  CPA_PLUGIN_DIR=/absolute/path/to/.cli-proxy-api/plugins/darwin/arm64 \\
+  CPA_PLUGIN_VERSION=0.1.5
+```
+
+`install-local` 会把原有同版本文件移到 `backups` 目录，然后复制当前工作区的 `bin/cpa-billing-management.dylib`。以后重新执行 `make install-local` 并重启 CLIProxyAPI 即可加载新构建；账单数据和插件配置不会被覆盖。
+
 启动 CLIProxyAPI 后，在管理页进入“费用统计”查看账单，或进入独立的“价格配置”页面维护模型价格。管理 API 路由为：
 
 - `GET /v0/management/cpa-billing-management/summary`
