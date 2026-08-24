@@ -11,7 +11,7 @@ func TestRenderContainsBillingDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, expected := range []string{"CPA 费用统计", "按 API Key 汇总", "api_keys", "failed_requests", "耗时/首字", "latency_ns", "ttft_ns", "自动刷新", "不刷新", "5 秒", "10 秒", "15 秒", "上一页", "下一页", "recent_events_total", "v0/management/cpa-billing-management/summary", "format=fallback-json", "X-Management-Key"} {
+	for _, expected := range []string{"CPA 费用统计", "按 API Key 汇总", "api_keys", "failed_requests", "耗时/首字", "输入", "缓存", "cached_tokens", "latency_ns", "ttft_ns", "自动刷新", "不刷新", "5 秒", "10 秒", "15 秒", "上一页", "下一页", "recent_events_total", "v0/management/cpa-billing-management/summary", "format=fallback-json", "X-Management-Key"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("rendered dashboard does not contain %q", expected)
 		}

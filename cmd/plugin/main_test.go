@@ -40,7 +40,7 @@ func TestPluginBillingFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	const apiKey = "sk-test-sensitive-key"
-	usage := []byte(`{"Provider":"test","Model":"test-model","APIKey":"sk-test-sensitive-key","ActualCost":3,"TotalCost":99,"Latency":1500000000,"TTFT":250000000,"Detail":{"InputTokens":1000000,"OutputTokens":1000000,"TotalTokens":2000000}}`)
+	usage := []byte(`{"Provider":"test","Model":"test-model","APIKey":"sk-test-sensitive-key","ActualCost":3,"TotalCost":99,"Latency":1500000000,"TTFT":250000000,"Detail":{"InputTokens":1000000,"CachedTokens":250000,"OutputTokens":1000000,"TotalTokens":2000000}}`)
 	if _, err := handleMethod(abi.MethodUsageHandle, usage); err != nil {
 		t.Fatal(err)
 	}
@@ -55,10 +55,13 @@ func TestPluginBillingFlow(t *testing.T) {
 	if err := json.Unmarshal(body, &summary); err != nil {
 		t.Fatal(err)
 	}
-	if summary.Totals.Requests != 1 || summary.Totals.Cost != 3 {
+	if summary.Totals.Requests != 1 || summary.Totals.Cost != 3 || summary.Totals.CachedTokens != 250000 {
 		t.Fatalf("summary totals = %+v, want upstream cost 3", summary.Totals)
 	}
-	if len(summary.RecentEvents) != 1 || summary.RecentEvents[0].APIKey != "sk-t••••••-key" || summary.RecentEvents[0].LatencyNanos != 1_500_000_000 || summary.RecentEvents[0].TTFTNanos != 250_000_000 {
+	if len(summary.Models) != 1 || summary.Models[0].CachedTokens != 250000 || len(summary.APIKeys) != 1 || summary.APIKeys[0].CachedTokens != 250000 {
+		t.Fatalf("usage cache totals were not aggregated: models=%+v api_keys=%+v", summary.Models, summary.APIKeys)
+	}
+	if len(summary.RecentEvents) != 1 || summary.RecentEvents[0].APIKey != "sk-t••••••-key" || summary.RecentEvents[0].CachedTokens != 250000 || summary.RecentEvents[0].LatencyNanos != 1_500_000_000 || summary.RecentEvents[0].TTFTNanos != 250_000_000 {
 		t.Fatalf("usage identity and timing were not preserved safely: %+v", summary.RecentEvents)
 	}
 
