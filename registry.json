@@ -6,7 +6,7 @@
       "name": "CPA Billing Management",
       "description": "Adds token usage billing, model price management, and cost summaries to CLIProxyAPI.",
       "author": "chyern",
-      "version": "0.1.7",
+      "version": "0.1.8",
       "repository": "https://github.com/chyern/CPA-Billing-Management",
       "homepage": "https://github.com/chyern/CPA-Billing-Management",
       "tags": [
@@ -20,14 +20,14 @@
           {
             "goos": "darwin",
             "goarch": "arm64",
-            "url": "https://github.com/chyern/CPA-Billing-Management/releases/download/v0.1.7/cpa-billing-management_0.1.7_darwin_arm64.zip",
-            "sha256": "99c5bebf45897ca2ab39b908c6cdab42a545eeedd6cb1edc978436b9efdd067d"
+            "url": "https://github.com/chyern/CPA-Billing-Management/releases/download/v0.1.8/cpa-billing-management_0.1.8_darwin_arm64.zip",
+            "sha256": "babbf3e9ddfa499c5bdbbb7bf76b9178c6954a618735a8c0551e11245a37571c"
           },
           {
             "goos": "linux",
             "goarch": "amd64",
-            "url": "https://github.com/chyern/CPA-Billing-Management/releases/download/v0.1.7/cpa-billing-management_0.1.7_linux_amd64.zip",
-            "sha256": "13e7f5879f778f50f7f65974b4dfb641f9fa1f945a67c6bc478767456cd9560d"
+            "url": "https://github.com/chyern/CPA-Billing-Management/releases/download/v0.1.8/cpa-billing-management_0.1.8_linux_amd64.zip",
+            "sha256": "094f5c6ed6d7e39da8f1da256c395683a42e3a46bb39de192fc13d301847adf7"
           }
         ]
       }
