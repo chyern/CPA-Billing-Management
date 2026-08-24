@@ -12,12 +12,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false
 
       - name: Test
         run: go test ./...
@@ -48,12 +49,13 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false
 
       - name: Build plugin
         shell: bash
@@ -66,7 +68,7 @@ jobs:
           (cd dist/package && zip -9 "../${PLUGIN_ID}_${GOOS}_${GOARCH}.zip" "${PLUGIN_ID}.${EXTENSION}")
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.PLUGIN_ID }}-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/${{ env.PLUGIN_ID }}_${{ matrix.goos }}_${{ matrix.goarch }}.zip
