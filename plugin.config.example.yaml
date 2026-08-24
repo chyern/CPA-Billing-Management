@@ -1,3 +1,5 @@
 # 将此配置放入 CLIProxyAPI 的 plugins.configs.cpa-billing-management 下。
 # 模型价格可以在管理页“模型费用”中编辑，修改后保存在插件数据目录。
 currency: USD
+# 可选：资源页调用 CLIProxyAPI 管理 API 的 Bearer 管理密钥。
+# management_key: replace-with-management-key

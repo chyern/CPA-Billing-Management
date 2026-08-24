@@ -57,6 +57,8 @@ plugins:
       enabled: true
       priority: 1
       currency: USD
+      # 可选：资源页调用管理 API 的 Bearer 管理密钥
+      # management_key: replace-with-management-key
 ```
 
 如果需要指定账单数据目录，可以设置环境变量：
@@ -93,6 +95,8 @@ make install-local \\
 
 `/v0/resource/plugins/cpa-billing-management/pricing`
 
-资源页面只提供不包含账单数据的页面壳；页面加载的数据和模型费用修改统一通过带管理认证的 API 完成，
-因此不会把账单数据嵌入未认证的资源响应，也不会允许通过资源路由直接读取 JSON 或修改价格。
-带管理认证的 API 仍保留给外部自动化使用。若 CLIProxyAPI 对公网开放，仍应按 CLIProxyAPI 的部署方式保护管理 API。
+资源页面优先通过带管理认证的 API 加载数据；CLIProxyAPI 的资源 iframe 本身不会注入管理密钥，
+在这种情况下页面会回退到资源路由的只读 `format=fallback-json` 响应，以避免出现
+“missing management key”。模型费用写入仍走带管理认证的 API。带管理认证的 API 仍保留给外部自动化使用；
+若 CLIProxyAPI 对公网开放，仍应按 CLIProxyAPI 的部署方式保护管理 API 和插件资源路由。
+`management_key` 会仅在资源页 HTML 中用于附加 Bearer 请求头，不会写入账单状态文件；请只在受信任的管理中心环境中配置。

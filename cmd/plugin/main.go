@@ -53,7 +53,7 @@ import (
 
 const (
 	pluginID      = "cpa-billing-management"
-	pluginVersion = "0.1.5"
+	pluginVersion = "0.1.7"
 	resourcePath  = "/v0/resource/plugins/" + pluginID + "/billing"
 	pricingPath   = "/v0/resource/plugins/" + pluginID + "/pricing"
 )
@@ -173,6 +173,7 @@ func registration() abi.Registration {
 			GitHubRepository: "https://github.com/chyern/CPA-Billing-Management",
 			ConfigFields: []abi.ConfigField{
 				{Name: "currency", Type: "string", Description: "费用展示币种，默认 USD；事件未携带币种时使用此值。"},
+				{Name: "management_key", Type: "string", Description: "填写 CLIProxyAPI 管理中心使用的管理密钥，供资源页调用管理 API；可选，未填写时使用资源页只读回退。"},
 			},
 		},
 		Capabilities: abi.Capabilities{UsagePlugin: true, ManagementAPI: true},
@@ -281,10 +282,20 @@ func handleBillingResource(store *billing.Store, req abi.ManagementRequest) ([]b
 	}
 	switch method {
 	case http.MethodGet:
-		if strings.EqualFold(queryValue(req.Query, "format"), "json") {
+		format := queryValue(req.Query, "format")
+		if strings.EqualFold(format, "json") {
 			return jsonManagementError(http.StatusNotFound, "resource JSON is disabled; use the authenticated management API")
 		}
-		page, err := dashboard.RenderBilling(dashboard.Data{})
+		// Resource pages are intentionally unauthenticated by the host. The
+		// management console iframe therefore cannot attach its management key;
+		// keep an explicit page-only fallback for that case while preserving the
+		// authenticated management endpoint for external callers.
+		if strings.EqualFold(format, "fallback-json") {
+			page := billing.ParseInt(queryValue(req.Query, "page"))
+			pageSize := billing.ParseInt(queryValue(req.Query, "page_size"))
+			return jsonManagementResponse(map[string]any{"summary": store.SummaryPage(int(page), int(pageSize))})
+		}
+		page, err := dashboard.RenderBilling(dashboard.Data{ManagementKey: store.ManagementKey()})
 		if err != nil {
 			return nil, err
 		}
@@ -301,10 +312,14 @@ func handlePricingResource(store *billing.Store, req abi.ManagementRequest) ([]b
 	}
 	switch method {
 	case http.MethodGet:
-		if strings.EqualFold(queryValue(req.Query, "format"), "json") {
+		format := queryValue(req.Query, "format")
+		if strings.EqualFold(format, "json") {
 			return jsonManagementError(http.StatusNotFound, "resource JSON is disabled; use the authenticated management API")
 		}
-		page, err := dashboard.RenderPricing(dashboard.Data{})
+		if strings.EqualFold(format, "fallback-json") {
+			return jsonManagementResponse(map[string]any{"currency": store.Currency(), "rules": store.Rules()})
+		}
+		page, err := dashboard.RenderPricing(dashboard.Data{ManagementKey: store.ManagementKey()})
 		if err != nil {
 			return nil, err
 		}

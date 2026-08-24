@@ -56,6 +56,27 @@ func TestStorePersistsUpstreamUsageCost(t *testing.T) {
 	}
 }
 
+func TestConfigureYAMLReadsManagementKeyWithoutPersistingIt(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.ConfigureYAML([]byte("currency: CNY\nmanagement_key: test-management-secret\n"))
+	if got := store.Currency(); got != "CNY" {
+		t.Fatalf("currency = %q, want CNY", got)
+	}
+	if got := store.ManagementKey(); got != "test-management-secret" {
+		t.Fatalf("management key = %q, want configured key", got)
+	}
+	raw, err := os.ReadFile(filepath.Join(store.dataDir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "test-management-secret") {
+		t.Fatal("management key must not be persisted with billing state")
+	}
+}
+
 func TestCalculateCostAndModelPriceFallback(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {

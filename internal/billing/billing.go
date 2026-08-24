@@ -140,10 +140,11 @@ type Summary struct {
 }
 
 type Store struct {
-	mu      sync.RWMutex
-	dataDir string
-	state   State
-	lastErr error
+	mu            sync.RWMutex
+	dataDir       string
+	state         State
+	lastErr       error
+	managementKey string
 }
 
 func DefaultRules() []PriceRule {
@@ -589,22 +590,33 @@ func (s *Store) Currency() string {
 func (s *Store) ConfigureYAML(raw []byte) {
 	// The host sends plugin configuration as YAML. Pricing rules stay editable
 	// through the model-cost page and are persisted in the plugin state file.
+	var currency, managementKey string
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "currency:") {
-			continue
+		if strings.HasPrefix(line, "currency:") {
+			currency = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "currency:")), "\"'")
 		}
-		currency := strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "currency:")), "\"'")
-		if currency == "" {
-			continue
+		if strings.HasPrefix(line, "management_key:") {
+			managementKey = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "management_key:")), "\"'")
 		}
-		s.mu.Lock()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.managementKey = managementKey
+	if currency != "" {
 		s.state.Currency = currency
 		if err := s.persistLocked(); err != nil {
 			s.lastErr = err
 		}
-		s.mu.Unlock()
 	}
+}
+
+// ManagementKey returns the optional key configured for resource-page API
+// requests. It is kept in memory and is never persisted with billing data.
+func (s *Store) ManagementKey() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.managementKey
 }
 
 func (s *Store) LastError() string {

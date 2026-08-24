@@ -26,6 +26,9 @@ func TestPluginBillingFlow(t *testing.T) {
 	if !resultContains(t, registerRaw, `"usage_plugin":true`) || !resultContains(t, registerRaw, `"management_api":true`) {
 		t.Fatalf("registration is missing billing capabilities: %s", registerRaw)
 	}
+	if !resultContains(t, registerRaw, `"management_key"`) {
+		t.Fatalf("registration is missing the optional management key config field: %s", registerRaw)
+	}
 	managementRegisterRaw, err := handleMethod(abi.MethodManagementRegister, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -130,6 +133,24 @@ func TestPluginBillingFlow(t *testing.T) {
 	if got := managementStatus(t, refreshRaw); got != http.StatusNotFound {
 		t.Fatalf("billing resource JSON status = %d, want %d", got, http.StatusNotFound)
 	}
+	fallbackReq, _ := json.Marshal(abi.ManagementRequest{
+		Method: http.MethodGet,
+		Path:   resourcePath,
+		Query:  map[string][]string{"format": {"fallback-json"}, "page": {"2"}, "page_size": {"1"}},
+	})
+	fallbackRaw, err := handleMethod(abi.MethodManagementHandle, fallbackReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fallbackSnapshot struct {
+		Summary billing.Summary `json:"summary"`
+	}
+	if err := json.Unmarshal(managementBody(t, fallbackRaw), &fallbackSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if fallbackSnapshot.Summary.RecentEventsPage != 2 || fallbackSnapshot.Summary.RecentEventsPageSize != 1 {
+		t.Fatalf("resource fallback summary page = %+v", fallbackSnapshot.Summary)
+	}
 	managementRefreshReq, _ := json.Marshal(abi.ManagementRequest{
 		Method: http.MethodGet,
 		Path:   "/v0/management/cpa-billing-management/summary",
@@ -171,6 +192,20 @@ func TestPluginBillingFlow(t *testing.T) {
 	}
 	if got := managementStatus(t, pricingJSONRaw); got != http.StatusNotFound {
 		t.Fatalf("pricing resource JSON status = %d, want %d", got, http.StatusNotFound)
+	}
+	pricingFallbackReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodGet, Path: pricingPath, Query: map[string][]string{"format": {"fallback-json"}}})
+	pricingFallbackRaw, err := handleMethod(abi.MethodManagementHandle, pricingFallbackReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pricingFallback struct {
+		Rules []billing.PriceRule `json:"rules"`
+	}
+	if err := json.Unmarshal(managementBody(t, pricingFallbackRaw), &pricingFallback); err != nil {
+		t.Fatal(err)
+	}
+	if len(pricingFallback.Rules) != 1 || pricingFallback.Rules[0].Match != "test-model" {
+		t.Fatalf("pricing resource fallback = %+v", pricingFallback.Rules)
 	}
 
 	localPricesBody, _ := json.Marshal(map[string]any{"rules": []billing.PriceRule{{Match: "test-model", InputPerMillion: 3, OutputPerMillion: 6}}})
