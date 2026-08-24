@@ -2,7 +2,9 @@ package billing
 
 import (
 	"math"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -25,10 +27,29 @@ func TestStorePersistsUsageAndMatchesProviderModel(t *testing.T) {
 	if err := store.SetRules([]PriceRule{{Match: "codex/gpt-5.5", InputPerMillion: 10, OutputPerMillion: 20}}); err != nil {
 		t.Fatal(err)
 	}
-	store.HandleUsage(UsageRecord{Provider: "codex", Model: "gpt-5.5", RequestedAt: time.Now(), InputTokens: 1_000_000, OutputTokens: 2_000_000, TotalTokens: 3_000_000})
+	const apiKey = "sk-test-sensitive-key"
+	store.HandleUsage(UsageRecord{
+		Provider: "codex", Model: "gpt-5.5", APIKey: apiKey, RequestedAt: time.Now(),
+		Latency: 1500 * time.Millisecond, TTFT: 250 * time.Millisecond,
+		InputTokens: 1_000_000, OutputTokens: 2_000_000, TotalTokens: 3_000_000,
+	})
 	summary := store.Summary()
 	if summary.Totals.Requests != 1 || math.Abs(summary.Totals.Cost-50) > 1e-12 {
 		t.Fatalf("summary = %+v, want one request and cost 50", summary.Totals)
+	}
+	if len(summary.RecentEvents) != 1 {
+		t.Fatalf("recent events = %d, want 1", len(summary.RecentEvents))
+	}
+	event := summary.RecentEvents[0]
+	if event.APIKey != "sk-t••••••-key" || event.LatencyNanos != int64(1500*time.Millisecond) || event.TTFTNanos != int64(250*time.Millisecond) {
+		t.Fatalf("event identity and timing = %+v", event)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "data", "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), apiKey) {
+		t.Fatal("persistent billing state must not contain the complete API key")
 	}
 	reloaded, err := NewStore(filepath.Join(dir, "data"))
 	if err != nil {
@@ -36,6 +57,21 @@ func TestStorePersistsUsageAndMatchesProviderModel(t *testing.T) {
 	}
 	if got := reloaded.Summary().Totals.Cost; math.Abs(got-50) > 1e-12 {
 		t.Fatalf("reloaded cost = %v, want 50", got)
+	}
+}
+
+func TestMaskAPIKey(t *testing.T) {
+	tests := map[string]string{
+		"":                      "",
+		"ab":                    "••",
+		"abcd":                  "a••d",
+		"abcdefgh":              "a••••••h",
+		"sk-test-sensitive-key": "sk-t••••••-key",
+	}
+	for input, want := range tests {
+		if got := MaskAPIKey(input); got != want {
+			t.Errorf("MaskAPIKey(%q) = %q, want %q", input, got, want)
+		}
 	}
 }
 

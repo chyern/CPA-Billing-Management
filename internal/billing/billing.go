@@ -39,6 +39,8 @@ type UsageRecord struct {
 	AuthType            string
 	Source              string
 	RequestedAt         time.Time
+	Latency             time.Duration
+	TTFT                time.Duration
 	Failed              bool
 	InputTokens         int64
 	OutputTokens        int64
@@ -54,8 +56,11 @@ type UsageEvent struct {
 	Provider            string    `json:"provider"`
 	Model               string    `json:"model"`
 	Alias               string    `json:"alias,omitempty"`
+	APIKey              string    `json:"api_key,omitempty"`
 	AuthType            string    `json:"auth_type,omitempty"`
 	Source              string    `json:"source,omitempty"`
+	LatencyNanos        int64     `json:"latency_ns,omitempty"`
+	TTFTNanos           int64     `json:"ttft_ns,omitempty"`
 	Failed              bool      `json:"failed"`
 	InputTokens         int64     `json:"input_tokens"`
 	OutputTokens        int64     `json:"output_tokens"`
@@ -213,8 +218,9 @@ func (s *Store) HandleUsage(record UsageRecord) {
 	cost := CalculateCost(record, rule)
 	event := UsageEvent{
 		RequestedAt: record.RequestedAt, Provider: record.Provider, Model: record.Model,
-		Alias: record.Alias, AuthType: record.AuthType,
-		Source: record.Source, Failed: record.Failed, InputTokens: record.InputTokens,
+		Alias: record.Alias, APIKey: MaskAPIKey(record.APIKey), AuthType: record.AuthType,
+		Source: record.Source, LatencyNanos: nonNegativeDuration(record.Latency),
+		TTFTNanos: nonNegativeDuration(record.TTFT), Failed: record.Failed, InputTokens: record.InputTokens,
 		OutputTokens: record.OutputTokens, ReasoningTokens: record.ReasoningTokens,
 		CachedTokens: record.CachedTokens, CacheReadTokens: record.CacheReadTokens,
 		CacheCreationTokens: record.CacheCreationTokens, TotalTokens: record.TotalTokens,
@@ -250,6 +256,31 @@ func (s *Store) HandleUsage(record UsageRecord) {
 	if err := s.persistLocked(); err != nil {
 		s.lastErr = err
 	}
+}
+
+// MaskAPIKey returns a recognizable but non-secret API key label. The full key
+// is deliberately discarded before a usage event reaches persistent storage.
+func MaskAPIKey(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	runes := []rune(value)
+	switch {
+	case len(runes) <= 2:
+		return strings.Repeat("•", len(runes))
+	case len(runes) <= 8:
+		return string(runes[:1]) + strings.Repeat("•", len(runes)-2) + string(runes[len(runes)-1:])
+	default:
+		return string(runes[:4]) + "••••••" + string(runes[len(runes)-4:])
+	}
+}
+
+func nonNegativeDuration(value time.Duration) int64 {
+	if value <= 0 {
+		return 0
+	}
+	return int64(value)
 }
 
 func CalculateCost(record UsageRecord, rule PriceRule) float64 {

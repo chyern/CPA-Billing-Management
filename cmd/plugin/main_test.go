@@ -30,7 +30,8 @@ func TestPluginBillingFlow(t *testing.T) {
 	if err := store.SetRules([]billing.PriceRule{{Match: "test-model", InputPerMillion: 1, OutputPerMillion: 2}}); err != nil {
 		t.Fatal(err)
 	}
-	usage := []byte(`{"Provider":"test","Model":"test-model","Detail":{"InputTokens":1000000,"OutputTokens":1000000,"TotalTokens":2000000}}`)
+	const apiKey = "sk-test-sensitive-key"
+	usage := []byte(`{"Provider":"test","Model":"test-model","APIKey":"sk-test-sensitive-key","Latency":1500000000,"TTFT":250000000,"Detail":{"InputTokens":1000000,"OutputTokens":1000000,"TotalTokens":2000000}}`)
 	if _, err := handleMethod(abi.MethodUsageHandle, usage); err != nil {
 		t.Fatal(err)
 	}
@@ -47,6 +48,9 @@ func TestPluginBillingFlow(t *testing.T) {
 	}
 	if summary.Totals.Requests != 1 || summary.Totals.Cost != 3 {
 		t.Fatalf("summary totals = %+v, want one request and cost 3", summary.Totals)
+	}
+	if len(summary.RecentEvents) != 1 || summary.RecentEvents[0].APIKey != "sk-t••••••-key" || summary.RecentEvents[0].LatencyNanos != 1_500_000_000 || summary.RecentEvents[0].TTFTNanos != 250_000_000 {
+		t.Fatalf("usage identity and timing were not preserved safely: %+v", summary.RecentEvents)
 	}
 
 	pricesBody, _ := json.Marshal(map[string]any{"rules": []billing.PriceRule{{Match: "test-model", InputPerMillion: 2, OutputPerMillion: 4}}})
@@ -73,6 +77,12 @@ func TestPluginBillingFlow(t *testing.T) {
 	resourceBody := managementBody(t, resourceRaw)
 	if !contains(string(resourceBody), "test-model") {
 		t.Fatal("resource page must embed the current local billing snapshot")
+	}
+	if !contains(string(resourceBody), "API Key") || !contains(string(resourceBody), "耗时") || !contains(string(resourceBody), "latency_ns") {
+		t.Fatal("resource page must show the masked API key and request latency")
+	}
+	if contains(string(resourceBody), apiKey) {
+		t.Fatal("resource page must not expose the complete API key")
 	}
 	if contains(string(resourceBody), "管理 API Token") {
 		t.Fatal("local resource page must not request a management API token")

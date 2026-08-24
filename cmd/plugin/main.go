@@ -52,7 +52,7 @@ import (
 
 const (
 	pluginID      = "cpa-billing-management"
-	pluginVersion = "0.1.1"
+	pluginVersion = "0.1.2"
 	resourcePath  = "/v0/resource/plugins/" + pluginID + "/billing"
 )
 
@@ -192,7 +192,8 @@ func handleUsage(store *billing.Store, raw []byte) error {
 		Provider: stringValue(object, "provider"), ExecutorType: stringValue(object, "executor_type", "executortype"),
 		Model: stringValue(object, "model"), Alias: stringValue(object, "alias"), APIKey: stringValue(object, "api_key", "apikey"),
 		AuthID: stringValue(object, "auth_id", "authid"), AuthType: stringValue(object, "auth_type", "authtype"),
-		Source: stringValue(object, "source"), Failed: boolValue(object, "failed"),
+		Source: stringValue(object, "source"), Latency: time.Duration(intValue(object, "latency", "duration", "elapsed")),
+		TTFT: time.Duration(intValue(object, "ttft")), Failed: boolValue(object, "failed"),
 		InputTokens: intValue(object, "input_tokens", "inputtokens"), OutputTokens: intValue(object, "output_tokens", "outputtokens"),
 		ReasoningTokens: intValue(object, "reasoning_tokens", "reasoningtokens"), CachedTokens: intValue(object, "cached_tokens", "cachedtokens"),
 		CacheReadTokens: intValue(object, "cache_read_tokens", "cachereadtokens"), CacheCreationTokens: intValue(object, "cache_creation_tokens", "cachecreationtokens"),
