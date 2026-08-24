@@ -44,7 +44,8 @@ https://raw.githubusercontent.com/chyern/CPA-Billing-Management/main/registry.js
 ```
 
 保存配置后进入“插件商店”，刷新插件源并安装 **CPA Billing Management**。
-插件安装包来自此仓库的最新 GitHub Release，CLIProxyAPI 会根据平台选择对应压缩包并校验 `checksums.txt`。
+插件安装包来自此仓库的 GitHub Release，第三方源通过固定版本、平台和 SHA-256 声明直接安装，
+因此不会消耗 GitHub Releases API 的匿名请求额度。发布新版本时需要同步更新 `registry.json`。
 
 当前发布流程提供 Darwin arm64 产物，适用于 Apple Silicon Mac。
 
