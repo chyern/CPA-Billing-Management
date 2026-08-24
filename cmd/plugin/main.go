@@ -52,7 +52,7 @@ import (
 
 const (
 	pluginID      = "cpa-billing-management"
-	pluginVersion = "0.1.4"
+	pluginVersion = "0.1.5"
 	resourcePath  = "/v0/resource/plugins/" + pluginID + "/billing"
 	pricingPath   = "/v0/resource/plugins/" + pluginID + "/pricing"
 )

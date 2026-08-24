@@ -85,8 +85,8 @@ func TestPluginBillingFlow(t *testing.T) {
 	if !contains(string(resourceBody), "test-model") {
 		t.Fatal("resource page must embed the current local billing snapshot")
 	}
-	if !contains(string(resourceBody), "API Key") || !contains(string(resourceBody), "耗时") || !contains(string(resourceBody), "latency_ns") {
-		t.Fatal("resource page must show the masked API key and request latency")
+	if !contains(string(resourceBody), "API Key") || !contains(string(resourceBody), "耗时/首字") || !contains(string(resourceBody), "latency_ns") || !contains(string(resourceBody), "ttft_ns") {
+		t.Fatal("resource page must show the masked API key, total latency, and TTFT")
 	}
 	if contains(string(resourceBody), "价格规则") || contains(string(resourceBody), "数据直接读取自本机插件存储") {
 		t.Fatal("billing resource page must not contain pricing controls or the local-storage notice")
