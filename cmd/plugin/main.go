@@ -1,6 +1,10 @@
 package main
 
 /*
+#if defined(__linux__)
+#define _GNU_SOURCE
+#endif
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <dlfcn.h>
