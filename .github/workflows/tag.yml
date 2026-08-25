@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - registry.json
 
 permissions:
   contents: read
@@ -26,7 +28,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.AUTO_WORKFLOW_APP_ID }}
+          client-id: ${{ vars.AUTO_WORKFLOW_APP_ID }}
           private-key: ${{ secrets.AUTO_WORKFLOW_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}

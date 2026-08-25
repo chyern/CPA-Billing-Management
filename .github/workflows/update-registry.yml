@@ -19,16 +19,28 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-24.04
     env:
-      GH_TOKEN: ${{ github.token }}
       PLUGIN_ID: cpa-billing-management
       RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
 
     steps:
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.AUTO_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.AUTO_WORKFLOW_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
       - name: Check out main
         uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0
+          # The App installation token is required to bypass main's protected
+          # branch rule when committing generated registry metadata.
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Validate release tag
         shell: bash
@@ -40,6 +52,8 @@ jobs:
           }
 
       - name: Download release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -73,7 +87,7 @@ jobs:
             --darwin-sha256 "${darwin_sha256}" \
             --linux-sha256 "${linux_sha256}"
 
-      - name: Commit registry update
+      - name: Commit registry update to main
         shell: bash
         run: |
           set -euo pipefail
@@ -86,6 +100,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add registry.json
           git commit -m "chore: publish ${RELEASE_TAG} registry metadata"
-          # A GITHUB_TOKEN push does not start another workflow, so this commit
-          # cannot recursively trigger tag.yml.
           git push origin HEAD:main
