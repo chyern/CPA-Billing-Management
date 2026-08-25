@@ -34,13 +34,14 @@ make build
 在 CLIProxyAPI 管理页的“配置面板 → 高级与实验 → 第三方插件源”中添加：
 
 ```text
-https://raw.githubusercontent.com/chyern/CPA-Billing-Management/main/registry.json
+https://raw.githubusercontent.com/chyern/CPA-Plugins/main/registry.json
 ```
 
 保存配置后进入“插件商店”，刷新插件源并安装 **CPA Billing Management**。
 插件安装包来自此仓库的 GitHub Release，第三方源通过固定版本、平台和 SHA-256 声明直接安装，
 因此不会消耗 GitHub Releases API 的匿名请求额度。发布新版本时，GitHub Actions 会在正式
-Release 创建完成后自动计算产物 SHA-256 并更新 `main` 分支上的 `registry.json`。
+`registry.json` 独立维护在 [`CPA-Plugins`](https://github.com/chyern/CPA-Plugins) 项目中；
+本项目的 Release Workflow 只负责测试、构建和发布 GitHub Release 产物。
 
 当前发布流程提供 Darwin arm64（Apple Silicon Mac）和 Linux amd64 产物。
 本项目的 GitHub Actions 只响应 `v*` 发布标签；推送普通分支、提交 Pull Request 或手动操作不会触发构建。

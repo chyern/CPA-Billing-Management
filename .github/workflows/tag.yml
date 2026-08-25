@@ -1,0 +1,72 @@
+name: Tag release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tag-release-main
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source with tags
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.AUTO_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.AUTO_WORKFLOW_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - name: Create next patch tag
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          latest="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1)"
+          if [[ -z "${latest}" ]]; then
+            latest="v0.0.0"
+          fi
+
+          version="${latest#v}"
+          IFS='.' read -r major minor patch <<< "${version}"
+          tag="v${major}.${minor}.$((patch + 1))"
+
+          if git ls-remote --exit-code origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "${tag} already exists; nothing to do"
+            exit 0
+          fi
+
+          tag_sha="$(gh api \
+            --method POST \
+            "repos/${REPOSITORY}/git/tags" \
+            -f "tag=${tag}" \
+            -f "message=Release ${tag}" \
+            -f "object=${COMMIT_SHA}" \
+            -f "type=commit" \
+            --jq '.sha')"
+
+          gh api \
+            --method POST \
+            "repos/${REPOSITORY}/git/refs" \
+            -f "ref=refs/tags/${tag}" \
+            -f "sha=${tag_sha}"
+
+          echo "Created ${tag} for ${COMMIT_SHA}"
