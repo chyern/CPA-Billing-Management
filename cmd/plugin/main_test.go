@@ -30,6 +30,9 @@ func TestPluginBillingFlow(t *testing.T) {
 	if resultContains(t, registerRaw, `"management_key"`) {
 		t.Fatalf("registration must not expose a second management key config field: %s", registerRaw)
 	}
+	if !resultContains(t, registerRaw, `"cpa_billing_data_dir"`) {
+		t.Fatalf("registration is missing the SQLite data directory config field: %s", registerRaw)
+	}
 	managementRegisterRaw, err := handleMethod(abi.MethodManagementRegister, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -232,6 +235,20 @@ func TestPluginBillingFlow(t *testing.T) {
 	}
 	if summary.Totals.Cost != 12 {
 		t.Fatalf("recalculated hybrid cost = %v, want upstream 3 plus model estimate 9", summary.Totals.Cost)
+	}
+}
+
+func TestConfiguredDataDir(t *testing.T) {
+	for _, test := range []struct {
+		raw  string
+		want string
+	}{
+		{raw: "cpa_billing_data_dir: '/tmp/quoted'\n", want: "/tmp/quoted"},
+		{raw: "currency: USD\n", want: ""},
+	} {
+		if got := configuredDataDir([]byte(test.raw)); got != test.want {
+			t.Fatalf("configuredDataDir(%q) = %q, want %q", test.raw, got, test.want)
+		}
 	}
 }
 

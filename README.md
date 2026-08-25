@@ -8,7 +8,7 @@ CLIProxyAPI 自定义插件：接收 usage 事件，优先使用上游金额，�
 - 上游回调明确包含费用字段时直接使用该金额；
 - 上游未返回金额时，按输入、输出、缓存读取和缓存创建 token 以及模型价格规则估算费用；
 - 支持 `provider/model`、模型名、alias 和 `*` 通配价格规则；
-- 将账单状态持久化到插件数据目录，默认是操作系统用户配置目录下的 `cliproxyapi/cpa-billing-management`；
+- 使用 SQLite 持久化账单状态，包含按模型汇总、按 API Key 汇总和最近事件；数据库文件为数据目录下的 `billing.db`，默认目录是操作系统用户配置目录下的 `cliproxyapi/cpa-billing-management`；
 - 在 CLIProxyAPI 管理页增加“费用统计”菜单，展示总费用、按模型汇总、按脱敏 API Key 汇总，以及最近请求的总耗时和首 Token 耗时；最近事件支持分页和可选的 5/10/15 秒自动刷新；
 - 在独立的“模型费用”页面编辑价格规则；未匹配价格的事件费用为 0，并标记为“未配置模型费用”。
 - 模型费用页默认不添加价格规则；支持从 [LiteLLM 公共模型价格目录](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json) 同步当前已使用且可识别的模型，未识别的模型仍可手动配置。
@@ -60,13 +60,10 @@ plugins:
       enabled: true
       priority: 1
       currency: USD
+      cpa_billing_data_dir: /absolute/path/to/billing-data
 ```
 
-如果需要指定账单数据目录，可以设置环境变量：
-
-```bash
-export CPA_BILLING_DATA_DIR=/var/lib/cliproxyapi/billing
-```
+`cpa_billing_data_dir` 可直接在 CPA 管理页的插件配置中填写；留空时使用插件动态库所在的安装目录。
 
 ### 本地目录安装（开发/快速更新）
 

@@ -1,3 +1,6 @@
 # 将此配置放入 CLIProxyAPI 的 plugins.configs.cpa-billing-management 下。
 # 模型价格可以在管理页“模型费用”中编辑，修改后保存在插件数据目录。
 currency: USD
+
+# SQLite 数据库目录；留空时使用插件安装目录。
+# cpa_billing_data_dir: /absolute/path/to/billing-data

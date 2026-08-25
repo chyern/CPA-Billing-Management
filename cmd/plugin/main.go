@@ -3,6 +3,9 @@ package main
 /*
 #include <stdint.h>
 #include <stdlib.h>
+#include <dlfcn.h>
+
+#cgo linux LDFLAGS: -ldl
 
 typedef struct {
 	void* ptr;
@@ -33,6 +36,14 @@ typedef struct {
 extern int cliproxyPluginCall(char*, uint8_t*, size_t, cliproxy_buffer*);
 extern void cliproxyPluginFree(void*, size_t);
 extern void cliproxyPluginShutdown(void);
+
+static const char* cliproxyPluginLibraryPath(void) {
+	Dl_info info;
+	if (dladdr((void*)&cliproxyPluginCall, &info) != 0 && info.dli_fname != NULL) {
+		return info.dli_fname;
+	}
+	return NULL;
+}
 */
 import "C"
 
@@ -40,6 +51,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,24 +65,55 @@ import (
 
 const (
 	pluginID      = "cpa-billing-management"
-	pluginVersion = "0.1.9"
+	pluginVersion = "0.1.10"
 	resourcePath  = "/v0/resource/plugins/" + pluginID + "/billing"
 	pricingPath   = "/v0/resource/plugins/" + pluginID + "/pricing"
 )
 
 var (
-	storeOnce sync.Once
-	store     *billing.Store
-	storeErr  error
+	storeMu      sync.Mutex
+	store        *billing.Store
+	storeErr     error
+	storeDataDir string
 )
 
-func getBillingStore() (*billing.Store, error) {
-	storeOnce.Do(func() {
-		if store == nil {
-			store, storeErr = billing.NewStore("")
-		}
-	})
+func getBillingStore(configuredDataDir string) (*billing.Store, error) {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	// Tests may inject a store directly; keep that store until a path is
+	// explicitly configured.
+	if store != nil && storeDataDir == "" && strings.TrimSpace(configuredDataDir) == "" {
+		return store, storeErr
+	}
+	dataDir := billing.ResolveDataDir(configuredDataDir, pluginInstallDir())
+	if store != nil && storeDataDir == dataDir {
+		return store, storeErr
+	}
+	if store != nil {
+		_ = store.Close()
+	}
+	store, storeErr = billing.NewStore(dataDir)
+	storeDataDir = dataDir
 	return store, storeErr
+}
+
+func pluginInstallDir() string {
+	path := C.GoString(C.cliproxyPluginLibraryPath())
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	return filepath.Dir(path)
+}
+
+func configuredDataDir(raw []byte) string {
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		const key = "cpa_billing_data_dir:"
+		if strings.HasPrefix(line, key) {
+			return strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, key)), "\"'")
+		}
+	}
+	return ""
 }
 
 func main() {}
@@ -125,18 +168,26 @@ func cliproxyPluginFree(ptr unsafe.Pointer, _ C.size_t) {
 func cliproxyPluginShutdown() {}
 
 func handleMethod(method string, request []byte) ([]byte, error) {
-	billingStore, err := getBillingStore()
-	if err != nil {
-		return nil, err
-	}
 	switch method {
 	case abi.MethodPluginRegister, abi.MethodPluginReconfigure:
 		var lifecycle abi.LifecycleRequest
+		dataDir := ""
 		if len(request) > 0 && json.Unmarshal(request, &lifecycle) == nil {
+			dataDir = configuredDataDir(lifecycle.ConfigYAML)
+		}
+		billingStore, err := getBillingStore(dataDir)
+		if err != nil {
+			return nil, err
+		}
+		if len(request) > 0 {
 			billingStore.ConfigureYAML(lifecycle.ConfigYAML)
 		}
 		return okEnvelope(registration())
 	case abi.MethodUsageHandle:
+		billingStore, err := getBillingStore("")
+		if err != nil {
+			return nil, err
+		}
 		if err := handleUsage(billingStore, request); err != nil {
 			// Usage callbacks have no error channel in the public plugin API. Return
 			// an error envelope for diagnostics while keeping the host request alive.
@@ -158,6 +209,10 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 			},
 		})
 	case abi.MethodManagementHandle:
+		billingStore, err := getBillingStore("")
+		if err != nil {
+			return nil, err
+		}
 		return handleManagement(billingStore, request)
 	default:
 		return errorEnvelope("unknown_method", "unknown method: "+method), nil
@@ -174,6 +229,7 @@ func registration() abi.Registration {
 			GitHubRepository: "https://github.com/chyern/CPA-Billing-Management",
 			ConfigFields: []abi.ConfigField{
 				{Name: "currency", Type: "string", Description: "费用展示币种，默认 USD；事件未携带币种时使用此值。"},
+				{Name: "cpa_billing_data_dir", Type: "string", Description: "cpa_billing_data_dir：SQLite 账单数据库目录；留空时使用插件安装目录。"},
 			},
 		},
 		Capabilities: abi.Capabilities{UsagePlugin: true, ManagementAPI: true},

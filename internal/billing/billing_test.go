@@ -3,7 +3,6 @@ package billing
 import (
 	"fmt"
 	"math"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -27,6 +26,12 @@ func TestStorePersistsUpstreamUsageCost(t *testing.T) {
 	if summary.Totals.Requests != 1 || math.Abs(summary.Totals.Cost-4.25) > 1e-12 {
 		t.Fatalf("summary = %+v, want one request and upstream cost 4.25", summary.Totals)
 	}
+	if len(summary.Models) != 1 || summary.Models[0].Requests != 1 || summary.Models[0].InputTokens != 1_000_000 {
+		t.Fatalf("model aggregate = %+v, want persisted model totals", summary.Models)
+	}
+	if len(summary.APIKeys) != 1 || summary.APIKeys[0].Requests != 1 || summary.APIKeys[0].InputTokens != 1_000_000 {
+		t.Fatalf("api key aggregate = %+v, want persisted API key totals", summary.APIKeys)
+	}
 	if len(summary.RecentEvents) != 1 {
 		t.Fatalf("recent events = %d, want 1", len(summary.RecentEvents))
 	}
@@ -34,12 +39,12 @@ func TestStorePersistsUpstreamUsageCost(t *testing.T) {
 	if event.APIKey != "sk-t••••••-key" || event.LatencyNanos != int64(1500*time.Millisecond) || event.TTFTNanos != int64(250*time.Millisecond) {
 		t.Fatalf("event identity and timing = %+v", event)
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "data", "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), apiKey) {
+	raw := persistedStateJSON(t, store)
+	if strings.Contains(raw, apiKey) {
 		t.Fatal("persistent billing state must not contain the complete API key")
+	}
+	if !strings.Contains(raw, `"api_key_aggregates"`) {
+		t.Fatal("persistent billing state must include API key aggregates")
 	}
 	reloaded, err := NewStore(filepath.Join(dir, "data"))
 	if err != nil {
@@ -47,6 +52,13 @@ func TestStorePersistsUpstreamUsageCost(t *testing.T) {
 	}
 	if got := reloaded.Summary().Totals.Cost; math.Abs(got-4.25) > 1e-12 {
 		t.Fatalf("reloaded cost = %v, want 4.25", got)
+	}
+	reloadedSummary := reloaded.Summary()
+	if len(reloadedSummary.Models) != 1 || reloadedSummary.Models[0].InputTokens != 1_000_000 {
+		t.Fatalf("reloaded model aggregate = %+v, want persisted model totals", reloadedSummary.Models)
+	}
+	if len(reloadedSummary.APIKeys) != 1 || reloadedSummary.APIKeys[0].InputTokens != 1_000_000 {
+		t.Fatalf("reloaded API key aggregate = %+v, want persisted API key totals", reloadedSummary.APIKeys)
 	}
 	if err := reloaded.SetRules([]PriceRule{{Match: "gpt-5.5", InputPerMillion: 99, OutputPerMillion: 99}}); err != nil {
 		t.Fatal(err)
@@ -91,13 +103,19 @@ func TestConfigureYAMLIgnoresManagementKey(t *testing.T) {
 	if got := store.Currency(); got != "CNY" {
 		t.Fatalf("currency = %q, want CNY", got)
 	}
-	raw, err := os.ReadFile(filepath.Join(store.dataDir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "test-management-secret") || strings.Contains(string(raw), "management_key") {
+	raw := persistedStateJSON(t, store)
+	if strings.Contains(raw, "test-management-secret") || strings.Contains(raw, "management_key") {
 		t.Fatal("management key must not be persisted or configured by billing state")
 	}
+}
+
+func persistedStateJSON(t *testing.T, store *Store) string {
+	t.Helper()
+	var raw []byte
+	if err := store.db.QueryRow(`SELECT state_json FROM billing_state WHERE id = 1`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }
 
 func TestCalculateCostAndModelPriceFallback(t *testing.T) {

@@ -2,8 +2,8 @@ package billing
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -13,10 +13,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 const (
-	stateVersion       = 1
+	stateVersion       = 3
 	maxPersistedEvents = 10000
 	defaultCurrency    = "USD"
 )
@@ -117,12 +119,13 @@ type Totals struct {
 }
 
 type State struct {
-	Version    int                   `json:"version"`
-	Currency   string                `json:"currency"`
-	UpdatedAt  time.Time             `json:"updated_at"`
-	Rules      []PriceRule           `json:"rules"`
-	Events     []UsageEvent          `json:"events"`
-	Aggregates map[string]*Aggregate `json:"aggregates"`
+	Version          int                         `json:"version"`
+	Currency         string                      `json:"currency"`
+	UpdatedAt        time.Time                   `json:"updated_at"`
+	Rules            []PriceRule                 `json:"rules"`
+	Events           []UsageEvent                `json:"events"`
+	Aggregates       map[string]*Aggregate       `json:"aggregates"`
+	APIKeyAggregates map[string]*APIKeyAggregate `json:"api_key_aggregates"`
 }
 
 type Summary struct {
@@ -143,6 +146,7 @@ type Summary struct {
 type Store struct {
 	mu      sync.RWMutex
 	dataDir string
+	db      *sql.DB
 	state   State
 	lastErr error
 }
@@ -152,22 +156,38 @@ func DefaultRules() []PriceRule {
 }
 
 func NewStore(dataDir string) (*Store, error) {
-	if strings.TrimSpace(dataDir) == "" {
-		dataDir = defaultDataDir()
-	}
+	dataDir = ResolveDataDir(dataDir, "")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create billing data directory: %w", err)
 	}
-	s := &Store{dataDir: dataDir}
-	s.state = State{Version: stateVersion, Currency: defaultCurrency, Rules: DefaultRules(), Aggregates: map[string]*Aggregate{}}
+	dbPath := filepath.Join(dataDir, "billing.db")
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?_busy_timeout=5000&_journal_mode=WAL")
+	if err != nil {
+		return nil, fmt.Errorf("open billing database: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("configure billing database: %w", err)
+	}
+	s := &Store{dataDir: dataDir, db: db}
+	s.state = State{
+		Version: stateVersion, Currency: defaultCurrency, Rules: DefaultRules(),
+		Aggregates: map[string]*Aggregate{}, APIKeyAggregates: map[string]*APIKeyAggregate{},
+	}
+	if err := s.initDatabase(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := s.load(); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 	return s, nil
 }
 
 func defaultDataDir() string {
-	if configured := strings.TrimSpace(os.Getenv("CPA_BILLING_DATA_DIR")); configured != "" {
+	if configured := strings.TrimSpace(os.Getenv("cpa_billing_data_dir")); configured != "" {
 		return configured
 	}
 	base, err := os.UserConfigDir()
@@ -177,29 +197,56 @@ func defaultDataDir() string {
 	return filepath.Join(base, "cliproxyapi", "cpa-billing-management")
 }
 
-func (s *Store) statePath() string { return filepath.Join(s.dataDir, "state.json") }
+// ResolveDataDir chooses an explicitly configured directory first, then the
+// plugin-provided fallback directory, and finally the process default.
+func ResolveDataDir(configured, fallback string) string {
+	if configured = strings.TrimSpace(configured); configured != "" {
+		return configured
+	}
+	if fallback = strings.TrimSpace(fallback); fallback != "" {
+		return fallback
+	}
+	return defaultDataDir()
+}
+
+func (s *Store) databasePath() string { return filepath.Join(s.dataDir, "billing.db") }
+
+func (s *Store) initDatabase() error {
+	_, err := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS billing_state (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			state_json BLOB NOT NULL,
+			updated_at TEXT NOT NULL
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("initialize billing database: %w", err)
+	}
+	return nil
+}
 
 func (s *Store) load() error {
-	raw, err := os.ReadFile(s.statePath())
-	if errors.Is(err, os.ErrNotExist) {
+	var raw []byte
+	err := s.db.QueryRow(`SELECT state_json FROM billing_state WHERE id = 1`).Scan(&raw)
+	if err == sql.ErrNoRows {
 		return s.persistLocked()
 	}
 	if err != nil {
-		return fmt.Errorf("read billing state: %w", err)
+		return fmt.Errorf("read billing state from database: %w", err)
 	}
 	var loaded State
 	if err := json.Unmarshal(raw, &loaded); err != nil {
 		return fmt.Errorf("decode billing state: %w", err)
 	}
-	// Older versions persisted Source verbatim.  Redact secret-like values
-	// while loading so an existing state file is migrated on the next write.
+	// Redact secret-like values before loading persisted state.
 	for i := range loaded.Events {
 		loaded.Events[i].Source = MaskSensitiveSource(loaded.Events[i].Source)
 		if loaded.Events[i].APIKeyID == "" && loaded.Events[i].APIKey != "" {
 			loaded.Events[i].APIKeyID = "legacy:" + loaded.Events[i].APIKey
 		}
 	}
-	if loaded.Version == 0 {
+	needsMigration := loaded.Version < stateVersion
+	if needsMigration {
 		loaded.Version = stateVersion
 	}
 	if loaded.Currency == "" {
@@ -210,6 +257,15 @@ func (s *Store) load() error {
 		loaded.Aggregates = map[string]*Aggregate{}
 	}
 	s.state = loaded
+	if s.state.APIKeyAggregates == nil {
+		s.rebuildAPIKeyAggregatesLocked()
+		needsMigration = true
+	}
+	if needsMigration {
+		if err := s.persistLocked(); err != nil {
+			return fmt.Errorf("migrate billing state: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -219,13 +275,12 @@ func (s *Store) persistLocked() error {
 	if err != nil {
 		return fmt.Errorf("encode billing state: %w", err)
 	}
-	tmp := s.statePath() + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-		return fmt.Errorf("write billing state: %w", err)
-	}
-	if err := os.Rename(tmp, s.statePath()); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("replace billing state: %w", err)
+	_, err = s.db.Exec(`
+		INSERT INTO billing_state (id, state_json, updated_at) VALUES (1, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at
+	`, raw, s.state.UpdatedAt.Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("write billing state to database: %w", err)
 	}
 	return nil
 }
@@ -288,8 +343,59 @@ func (s *Store) HandleUsage(record UsageRecord) {
 	} else {
 		aggregate.Priced = aggregate.Priced && priced
 	}
+	s.addAPIKeyAggregateLocked(event)
 	if err := s.persistLocked(); err != nil {
 		s.lastErr = err
+	}
+}
+
+func (s *Store) addAPIKeyAggregateLocked(event UsageEvent) {
+	if s.state.APIKeyAggregates == nil {
+		s.state.APIKeyAggregates = map[string]*APIKeyAggregate{}
+	}
+	label := strings.TrimSpace(event.APIKey)
+	if label == "" {
+		label = "未提供"
+	}
+	legacyKey := "legacy:" + label
+	groupKey := event.APIKeyID
+	if _, legacyExists := s.state.APIKeyAggregates[legacyKey]; legacyExists || groupKey == "" {
+		groupKey = legacyKey
+	}
+	aggregate := s.state.APIKeyAggregates[groupKey]
+	if aggregate == nil {
+		aggregate = &APIKeyAggregate{APIKey: label}
+		s.state.APIKeyAggregates[groupKey] = aggregate
+	}
+	aggregate.Requests++
+	if event.Failed {
+		aggregate.FailedRequests++
+	}
+	aggregate.InputTokens += event.InputTokens
+	aggregate.OutputTokens += event.OutputTokens
+	aggregate.ReasoningTokens += event.ReasoningTokens
+	aggregate.CachedTokens += event.CachedTokens
+	aggregate.TotalTokens += event.TotalTokens
+	aggregate.Cost += event.Cost
+}
+
+func (s *Store) rebuildAPIKeyAggregatesLocked() {
+	s.state.APIKeyAggregates = map[string]*APIKeyAggregate{}
+	legacyLabels := make(map[string]struct{})
+	for _, event := range s.state.Events {
+		if strings.HasPrefix(event.APIKeyID, "legacy:") && event.APIKey != "" {
+			legacyLabels[event.APIKey] = struct{}{}
+		}
+	}
+	for _, event := range s.state.Events {
+		label := strings.TrimSpace(event.APIKey)
+		if label == "" {
+			label = "未提供"
+		}
+		if _, legacy := legacyLabels[label]; legacy {
+			event.APIKeyID = "legacy:" + label
+		}
+		s.addAPIKeyAggregateLocked(event)
 	}
 }
 
@@ -421,43 +527,10 @@ func (s *Store) SummaryPage(page, pageSize int) Summary {
 		}
 	}
 	sort.Slice(models, func(i, j int) bool { return models[i].Cost > models[j].Cost })
-	apiKeyMap := make(map[string]*APIKeyAggregate)
-	legacyLabels := make(map[string]struct{})
-	for _, event := range s.state.Events {
-		if strings.HasPrefix(event.APIKeyID, "legacy:") && event.APIKey != "" {
-			legacyLabels[event.APIKey] = struct{}{}
-		}
-	}
-	for _, event := range s.state.Events {
-		label := strings.TrimSpace(event.APIKey)
-		if label == "" {
-			label = "未提供"
-		}
-		groupKey := event.APIKeyID
-		if _, legacy := legacyLabels[label]; legacy {
-			groupKey = "legacy:" + label
-		} else if groupKey == "" {
-			groupKey = "legacy:" + label
-		}
-		aggregate := apiKeyMap[groupKey]
-		if aggregate == nil {
-			aggregate = &APIKeyAggregate{APIKey: label}
-			apiKeyMap[groupKey] = aggregate
-		}
-		aggregate.Requests++
-		if event.Failed {
-			aggregate.FailedRequests++
-		}
-		aggregate.InputTokens += event.InputTokens
-		aggregate.OutputTokens += event.OutputTokens
-		aggregate.ReasoningTokens += event.ReasoningTokens
-		aggregate.CachedTokens += event.CachedTokens
-		aggregate.TotalTokens += event.TotalTokens
-		aggregate.Cost += event.Cost
-	}
-	apiKeys := make([]*APIKeyAggregate, 0, len(apiKeyMap))
-	for _, aggregate := range apiKeyMap {
-		apiKeys = append(apiKeys, aggregate)
+	apiKeys := make([]*APIKeyAggregate, 0, len(s.state.APIKeyAggregates))
+	for _, aggregate := range s.state.APIKeyAggregates {
+		copy := *aggregate
+		apiKeys = append(apiKeys, &copy)
 	}
 	sort.Slice(apiKeys, func(i, j int) bool {
 		if apiKeys[i].Requests == apiKeys[j].Requests {
@@ -543,6 +616,7 @@ func removeLegacyDefaultRules(rules []PriceRule) []PriceRule {
 
 func (s *Store) recalculateLocked() {
 	s.state.Aggregates = map[string]*Aggregate{}
+	s.state.APIKeyAggregates = map[string]*APIKeyAggregate{}
 	for index := range s.state.Events {
 		event := &s.state.Events[index]
 		record := UsageRecord{
@@ -576,6 +650,7 @@ func (s *Store) recalculateLocked() {
 		aggregate.TotalTokens += event.TotalTokens
 		aggregate.Cost += event.Cost
 		aggregate.Priced = aggregate.Priced && matched
+		s.addAPIKeyAggregateLocked(*event)
 	}
 }
 
@@ -584,6 +659,7 @@ func (s *Store) Reset() error {
 	defer s.mu.Unlock()
 	s.state.Events = nil
 	s.state.Aggregates = map[string]*Aggregate{}
+	s.state.APIKeyAggregates = map[string]*APIKeyAggregate{}
 	if err := s.persistLocked(); err != nil {
 		s.lastErr = err
 		return err
@@ -599,7 +675,7 @@ func (s *Store) Currency() string {
 
 func (s *Store) ConfigureYAML(raw []byte) {
 	// The host sends plugin configuration as YAML. Pricing rules stay editable
-	// through the model-cost page and are persisted in the plugin state file.
+	// through the model-cost page and are persisted in the SQLite database.
 	var currency string
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
@@ -624,6 +700,19 @@ func (s *Store) LastError() string {
 		return ""
 	}
 	return s.lastErr.Error()
+}
+
+// Close releases the SQLite connection. It is used when the plugin is
+// reconfigured to point at a different data directory.
+func (s *Store) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db == nil {
+		return nil
+	}
+	err := s.db.Close()
+	s.db = nil
+	return err
 }
 
 func ParseInt(value any) int64 {
