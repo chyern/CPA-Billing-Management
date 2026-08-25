@@ -1,0 +1,91 @@
+name: Update registry
+
+on:
+  workflow_run:
+    workflows:
+      - Release plugin
+    types:
+      - completed
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-registry-main
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PLUGIN_ID: cpa-billing-management
+      RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "release workflow did not run for a semantic version tag: ${RELEASE_TAG}" >&2
+            exit 1
+          }
+
+      - name: Download release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist
+          gh release download "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern "${PLUGIN_ID}_*.zip" \
+            --pattern checksums.txt \
+            --dir dist \
+            --clobber
+          test -f "dist/checksums.txt"
+          test -f "dist/${PLUGIN_ID}_${RELEASE_TAG#v}_darwin_arm64.zip"
+          test -f "dist/${PLUGIN_ID}_${RELEASE_TAG#v}_linux_amd64.zip"
+          (cd dist && sha256sum --check checksums.txt)
+
+      - name: Update registry metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          darwin_asset="dist/${PLUGIN_ID}_${version}_darwin_arm64.zip"
+          linux_asset="dist/${PLUGIN_ID}_${version}_linux_amd64.zip"
+          darwin_sha256="$(sha256sum "${darwin_asset}" | awk '{print $1}')"
+          linux_sha256="$(sha256sum "${linux_asset}" | awk '{print $1}')"
+
+          python3 .github/scripts/update_registry.py \
+            --path registry.json \
+            --plugin-id "${PLUGIN_ID}" \
+            --version "${version}" \
+            --darwin-sha256 "${darwin_sha256}" \
+            --linux-sha256 "${linux_sha256}"
+
+      - name: Commit registry update
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- registry.json; then
+            echo "registry.json is already up to date"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add registry.json
+          git commit -m "chore: publish ${RELEASE_TAG} registry metadata"
+          # A GITHUB_TOKEN push does not start another workflow, so this commit
+          # cannot recursively trigger tag.yml.
+          git push origin HEAD:main
