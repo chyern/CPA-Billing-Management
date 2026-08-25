@@ -15,6 +15,8 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    env:
+      CGO_CFLAGS: -D_GNU_SOURCE
 
     steps:
       - name: Check out source
@@ -26,8 +28,23 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: Validate release version
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_VERSION#v}"
+          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "release tag must be vMAJOR.MINOR.PATCH: ${RELEASE_VERSION}" >&2
+            exit 1
+          }
+
       - name: Test
-        run: go test ./...
+        env:
+          PLUGIN_VERSION: ${{ github.ref_name }}
+        shell: bash
+        run: go test -ldflags "-X main.pluginVersion=${PLUGIN_VERSION#v}" ./...
 
   build:
     needs: test
@@ -52,6 +69,7 @@ jobs:
       GOARCH: ${{ matrix.goarch }}
       EXTENSION: ${{ matrix.extension }}
       CC: ${{ matrix.cc }}
+      CGO_CFLAGS: -D_GNU_SOURCE
 
     steps:
       - name: Check out source
@@ -71,8 +89,15 @@ jobs:
           asset="${PLUGIN_ID}_${version}_${GOOS}_${GOARCH}.zip"
           mkdir -p dist/package
           CGO_ENABLED=1 GOOS="${GOOS}" GOARCH="${GOARCH}" CC="${CC}" \
-            go build -buildmode=c-shared \
+            go build -ldflags "-X main.pluginVersion=${version}" -buildmode=c-shared \
             -o "dist/package/${PLUGIN_ID}.${EXTENSION}" ./cmd/plugin
+          smoke_flags=()
+          if [[ "${GOOS}" == "linux" ]]; then
+            smoke_flags=(-ldl)
+          fi
+          read -r -a cc_command <<< "${CC}"
+          "${cc_command[@]}" -Wall -Wextra -Werror -o dist/abi-smoke tests/abi_smoke.c "${smoke_flags[@]}"
+          dist/abi-smoke "dist/package/${PLUGIN_ID}.${EXTENSION}" "${version}"
           (cd dist/package && zip -9 "../${asset}" "${PLUGIN_ID}.${EXTENSION}")
           rm -rf dist/package
 

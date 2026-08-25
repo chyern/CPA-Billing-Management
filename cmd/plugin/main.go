@@ -1,6 +1,7 @@
 package main
 
 /*
+#cgo linux CFLAGS: -D_GNU_SOURCE
 #if defined(__linux__)
 #define _GNU_SOURCE
 #endif
@@ -68,11 +69,15 @@ import (
 )
 
 const (
-	pluginID      = "cpa-billing-management"
-	pluginVersion = "0.1.12"
-	resourcePath  = "/v0/resource/plugins/" + pluginID + "/billing"
-	pricingPath   = "/v0/resource/plugins/" + pluginID + "/pricing"
+	pluginID     = "cpa-billing-management"
+	resourcePath = "/v0/resource/plugins/" + pluginID + "/billing"
+	pricingPath  = "/v0/resource/plugins/" + pluginID + "/pricing"
 )
+
+// pluginVersion is injected by the build with the release tag. Keeping a
+// development fallback makes local builds explicit instead of letting a
+// hand-maintained source constant drift from the published artifact.
+var pluginVersion = "dev"
 
 var (
 	storeMu      sync.Mutex

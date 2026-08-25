@@ -12,6 +12,16 @@ import (
 	"github.com/chyern/CPA-Billing-Management/internal/billing"
 )
 
+func TestRegistrationUsesBuildVersion(t *testing.T) {
+	previous := pluginVersion
+	pluginVersion = "9.8.7"
+	t.Cleanup(func() { pluginVersion = previous })
+
+	if got := registration().Metadata.Version; got != "9.8.7" {
+		t.Fatalf("registration version = %q, want build-injected version", got)
+	}
+}
+
 func TestPluginBillingFlow(t *testing.T) {
 	var err error
 	store, err = billing.NewStore(filepath.Join(t.TempDir(), "data"))

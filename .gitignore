@@ -1,7 +1,5 @@
 /bin/
 /dist/
-Makefile
-
 # Compiled plugin artifacts generated under other directories.
 *.dylib
 *.so

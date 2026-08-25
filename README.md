@@ -27,6 +27,11 @@ make build
 构建产物为 `bin/cpa-billing-management.dylib`。Linux 发布包会包含
 `cpa-billing-management.so`，当前提供 `linux/amd64` 架构。
 
+插件版本由发布 Tag 注入插件元数据：GitHub Actions 从 `vMAJOR.MINOR.PATCH`
+Tag 构建时写入对应的 `MAJOR.MINOR.PATCH`；本地非 Tag 构建显示为 `dev`，在
+精确 Tag checkout 上运行 `make build` 则会自动使用该 Tag 版本。这样源码、构建产物
+和发布版本不会再依赖手工同步的版本常量。
+
 ## 安装与配置
 
 ### 通过第三方插件源安装

@@ -33,8 +33,8 @@ typedef struct {
 typedef int (*cliproxy_plugin_init_fn)(cliproxy_host_api *, cliproxy_plugin_api *);
 
 int main(int argc, char **argv) {
-    if (argc != 2) {
-        fprintf(stderr, "usage: %s <plugin-library>\n", argv[0]);
+    if (argc != 2 && argc != 3) {
+        fprintf(stderr, "usage: %s <plugin-library> [expected-version]\n", argv[0]);
         return 2;
     }
     void *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
@@ -72,16 +72,20 @@ int main(int argc, char **argv) {
     memcpy(json, response.ptr, response.len);
     plugin.free_buffer(response.ptr, response.len);
     int ok = strstr(json, "\"usage_plugin\":true") != NULL && strstr(json, "\"management_api\":true") != NULL;
+    if (ok && argc == 3) {
+        char version_needle[256];
+        int written = snprintf(version_needle, sizeof(version_needle), "\"Version\":\"%s\"", argv[2]);
+        ok = written > 0 && (size_t)written < sizeof(version_needle) && strstr(json, version_needle) != NULL;
+    }
     free(json);
     if (plugin.shutdown != NULL) {
         plugin.shutdown();
     }
     dlclose(library);
     if (!ok) {
-        fprintf(stderr, "registration is missing expected capabilities\n");
+        fprintf(stderr, "registration is missing expected capabilities or version\n");
         return 1;
     }
     puts("ABI smoke test passed");
     return 0;
 }
-
