@@ -91,12 +91,12 @@ jobs:
           CGO_ENABLED=1 GOOS="${GOOS}" GOARCH="${GOARCH}" CC="${CC}" \
             go build -ldflags "-X main.pluginVersion=${version}" -buildmode=c-shared \
             -o "dist/package/${PLUGIN_ID}.${EXTENSION}" ./cmd/plugin
-          smoke_flags=()
-          if [[ "${GOOS}" == "linux" ]]; then
-            smoke_flags=(-ldl)
-          fi
           read -r -a cc_command <<< "${CC}"
-          "${cc_command[@]}" -Wall -Wextra -Werror -o dist/abi-smoke tests/abi_smoke.c "${smoke_flags[@]}"
+          if [[ "${GOOS}" == "linux" ]]; then
+            "${cc_command[@]}" -Wall -Wextra -Werror -o dist/abi-smoke tests/abi_smoke.c -ldl
+          else
+            "${cc_command[@]}" -Wall -Wextra -Werror -o dist/abi-smoke tests/abi_smoke.c
+          fi
           dist/abi-smoke "dist/package/${PLUGIN_ID}.${EXTENSION}" "${version}"
           (cd dist/package && zip -9 "../${asset}" "${PLUGIN_ID}.${EXTENSION}")
           rm -rf dist/package
