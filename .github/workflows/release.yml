@@ -8,11 +8,13 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  release-darwin-arm64:
-    runs-on: macos-14
-    env:
-      PLUGIN_ID: cpa-billing-management
+  test:
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out source
@@ -27,33 +29,62 @@ jobs:
       - name: Test
         run: go test ./...
 
-      - name: Build and package Darwin arm64 plugin
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            goos: darwin
+            goarch: arm64
+            extension: dylib
+            cc: clang -arch arm64
+          - runner: ubuntu-24.04
+            goos: linux
+            goarch: amd64
+            extension: so
+            cc: gcc
+    runs-on: ${{ matrix.runner }}
+    env:
+      PLUGIN_ID: cpa-billing-management
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      EXTENSION: ${{ matrix.extension }}
+      CC: ${{ matrix.cc }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build and package plugin
         shell: bash
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          asset="${PLUGIN_ID}_${version}_darwin_arm64.zip"
+          asset="${PLUGIN_ID}_${version}_${GOOS}_${GOARCH}.zip"
           mkdir -p dist/package
-          CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 CC="clang -arch arm64" \
+          CGO_ENABLED=1 GOOS="${GOOS}" GOARCH="${GOARCH}" CC="${CC}" \
             go build -buildmode=c-shared \
-            -o "dist/package/${PLUGIN_ID}.dylib" ./cmd/plugin
-          (cd dist/package && zip -9 "../${asset}" "${PLUGIN_ID}.dylib")
-          (cd dist && shasum -a 256 "${asset}" > checksums.txt)
+            -o "dist/package/${PLUGIN_ID}.${EXTENSION}" ./cmd/plugin
+          (cd dist/package && zip -9 "../${asset}" "${PLUGIN_ID}.${EXTENSION}")
           rm -rf dist/package
 
-      - name: Publish GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            dist/cpa-billing-management_*_darwin_arm64.zip \
-            dist/checksums.txt \
-            --title "CPA Billing Management ${GITHUB_REF_NAME}" \
-            --generate-notes
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.PLUGIN_ID }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/${{ env.PLUGIN_ID }}_*.zip
+          if-no-files-found: error
 
-  release-linux-amd64:
-    needs: release-darwin-arm64
+  publish:
+    needs: build
     runs-on: ubuntu-24.04
     env:
       PLUGIN_ID: cpa-billing-management
@@ -62,36 +93,70 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v7
 
-      - name: Set up Go
-        uses: actions/setup-go@v7
+      - name: Download build artifacts
+        uses: actions/download-artifact@v7
         with:
-          go-version-file: go.mod
-          cache: false
+          pattern: ${{ env.PLUGIN_ID }}-*
+          path: dist
+          merge-multiple: true
 
-      - name: Test
-        run: go test ./...
-
-      - name: Build and package Linux amd64 plugin
+      - name: Calculate checksums
         shell: bash
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          asset="${PLUGIN_ID}_${version}_linux_amd64.zip"
-          checksum_asset="checksums_linux_amd64.txt"
-          mkdir -p dist/package
-          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CC=gcc \
-            go build -buildmode=c-shared \
-            -o "dist/package/${PLUGIN_ID}.so" ./cmd/plugin
-          (cd dist/package && zip -9 "../${asset}" "${PLUGIN_ID}.so")
-          (cd dist && sha256sum "${asset}" > "${checksum_asset}")
-          rm -rf dist/package
+          darwin_asset="dist/${PLUGIN_ID}_${version}_darwin_arm64.zip"
+          linux_asset="dist/${PLUGIN_ID}_${version}_linux_amd64.zip"
+          test -f "${darwin_asset}"
+          test -f "${linux_asset}"
+          (cd dist && sha256sum "$(basename "${darwin_asset}")" "$(basename "${linux_asset}")" | sort -k2 > checksums.txt)
 
-      - name: Publish Linux artifact
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh release upload "${GITHUB_REF_NAME}" \
-            "dist/${PLUGIN_ID}_"*_linux_amd64.zip \
-            dist/checksums_linux_amd64.txt \
-            --clobber
+          set -euo pipefail
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" \
+              dist/${PLUGIN_ID}_*.zip \
+              dist/checksums.txt \
+              --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              dist/${PLUGIN_ID}_*.zip \
+              dist/checksums.txt \
+              --verify-tag \
+              --title "CPA Billing Management ${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi
+
+      - name: Update registry on main
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          darwin_asset="dist/${PLUGIN_ID}_${version}_darwin_arm64.zip"
+          linux_asset="dist/${PLUGIN_ID}_${version}_linux_amd64.zip"
+          darwin_sha256="$(sha256sum "${darwin_asset}" | awk '{print $1}')"
+          linux_sha256="$(sha256sum "${linux_asset}" | awk '{print $1}')"
+
+          git fetch origin main
+          git switch --create registry-update origin/main
+          python3 .github/scripts/update_registry.py \
+            --path registry.json \
+            --plugin-id "${PLUGIN_ID}" \
+            --version "${version}" \
+            --darwin-sha256 "${darwin_sha256}" \
+            --linux-sha256 "${linux_sha256}"
+
+          if git diff --quiet -- registry.json; then
+            echo "registry.json is already up to date"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add registry.json
+          git commit -m "chore: publish ${GITHUB_REF_NAME} registry artifacts"
+          git push origin HEAD:main
