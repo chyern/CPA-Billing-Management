@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CPA 模型费用</title>
+  <style>{{STYLES}}</style>
+</head>
+<body>
+  <header class="header">
+    <div>
+      <h1>CPA 模型费用</h1>
+      <div class="muted">配置模型每百万 token 的估算价格；上游明确返回金额时不会被这里的规则覆盖</div>
+    </div>
+    <div class="toolbar"><span id="status" class="muted status"></span></div>
+  </header>
+
+  <main>
+    <section class="panel sync-panel">
+      <div class="panel-heading">
+        <div>
+          <h2>同步上游价格</h2>
+          <p class="muted">从公开价格目录导入模型价格，匹配已有规则后自动新增或更新。</p>
+        </div>
+        <span class="pill neutral">可选渠道</span>
+      </div>
+      <div class="sync-controls">
+        <label class="field" for="syncSource">
+          <span>价格来源</span>
+          <select id="syncSource" aria-label="价格来源">
+            <option value="litellm">LiteLLM 公共目录</option>
+            <option value="models.dev">Models.dev 公共目录</option>
+            <option value="openrouter">OpenRouter 模型 API</option>
+          </select>
+        </label>
+        <button class="btn primary" id="sync">同步上游价格</button>
+      </div>
+    </section>
+
+    <section class="panel rules-panel">
+      <div class="panel-heading">
+        <div>
+          <h2>模型价格规则</h2>
+          <p class="muted">匹配优先级：provider/model → model → alias → *。价格单位为当前币种 / 1M token，保存后会重新计算无上游金额的历史事件。</p>
+        </div>
+        <div class="actions">
+          <button class="btn" id="add">新增规则</button>
+          <button class="btn primary" id="save">保存模型费用</button>
+        </div>
+      </div>
+      <div id="rules" class="rules"></div>
+    </section>
+  </main>
+
+  <footer class="footer">CPA Billing Management · 当前币种：<span id="currency"></span> · 估算费用仅供参考</footer>
+  <script id="initial" type="application/json">{{INITIAL_JSON}}</script>
+  <script>{{AUTH_SCRIPT}}</script>
+  <script>{{PAGE_SCRIPT}}</script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CPA 费用统计</title>
+  <style>{{STYLES}}</style>
+</head>
+<body>
+  <header class="header">
+    <div>
+      <h1>CPA 费用统计</h1>
+      <div class="muted">上游明确返回金额时优先使用，否则按“模型费用”中的每百万 token 价格估算</div>
+    </div>
+    <div class="toolbar">
+      <span class="muted">自动刷新</span>
+      <select id="autoRefresh" aria-label="自动刷新">
+        <option value="0">不刷新</option>
+        <option value="5">5 秒</option>
+        <option value="10">10 秒</option>
+        <option value="15" selected>15 秒</option>
+      </select>
+      <span id="status" class="muted status"></span>
+    </div>
+  </header>
+
+  <main>
+    <section id="cards" class="grid"></section>
+    <section class="panel"><h2>按模型汇总</h2><div id="models"></div></section>
+    <section class="panel"><h2>按 API Key 汇总</h2><div id="apiKeys"></div></section>
+    <section class="panel"><h2>最近事件</h2><div id="events"></div></section>
+  </main>
+
+  <footer class="footer">CPA Billing Management · 模型费用为估算值，请以供应商账单为准</footer>
+  <script id="initial" type="application/json">{{INITIAL_JSON}}</script>
+  <script>{{AUTH_SCRIPT}}</script>
+  <script>{{PAGE_SCRIPT}}</script>
+</body>
+</html>

@@ -11,9 +11,22 @@ CLIProxyAPI 自定义插件：接收 usage 事件，优先使用上游金额，�
 - 使用 SQLite 持久化账单状态，包含按模型汇总、按 API Key 汇总和最近事件；数据库文件为数据目录下的 `billing.db`，默认目录是操作系统用户配置目录下的 `cliproxyapi/cpa-billing-management`；
 - 在 CLIProxyAPI 管理页增加“费用统计”菜单，展示总费用、按模型汇总、按脱敏 API Key 汇总，以及最近请求的总耗时和首 Token 耗时；最近事件支持分页和可选的 5/10/15 秒自动刷新；
 - 在独立的“模型费用”页面编辑价格规则；未匹配价格的事件费用为 0，并标记为“未配置模型费用”。
-- 模型费用页默认不添加价格规则；支持从 [LiteLLM 公共模型价格目录](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json) 同步当前已使用且可识别的模型，未识别的模型仍可手动配置。
+- 模型费用页默认不添加价格规则；支持按需从 [LiteLLM 公共模型价格目录](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)、[Models.dev](https://models.dev/) 或 [OpenRouter Models API](https://openrouter.ai/docs/api-reference/list-available-models) 同步当前已使用且可识别的模型，未识别的模型仍可手动配置。
 
 当前 CLIProxyAPI 的 `UsagePlugin` ABI 主要提供 token、耗时等字段，通常不包含金额，因此大多数文本模型会走模型价格估算。价格单位是配置币种/每百万 token，估算结果请以供应商账单为准。
+
+## 项目结构
+
+项目按协议适配、应用编排和领域能力分层，新增功能时应放入对应模块，避免继续扩张入口文件：
+
+- `cmd/plugin/main.go`：仅保留 C ABI 边界、插件存储实例和内存释放；
+- `cmd/plugin/dispatcher.go`：插件方法分发及生命周期注册；
+- `cmd/plugin/usage_handler.go`：将宿主 usage JSON 转换为领域记录；
+- `cmd/plugin/management_handler.go`：管理 API 和资源页路由；
+- `cmd/plugin/pricing_sync.go`、`pricing_catalog.go`：上游价格同步流程与目录格式解析；
+- `internal/billing`：账单领域层，分别维护模型、存储、用量聚合、定价、查询和敏感信息脱敏；
+- `internal/dashboard`：页面资源装配；`assets/` 下分别维护公共 CSS、鉴权脚本、费用页和模型费用页的 HTML/JS，构建时通过 `go:embed` 嵌入插件；
+- `internal/abi`：CLIProxyAPI 插件协议的数据结构。
 
 ## 构建
 
@@ -77,11 +90,10 @@ plugins:
 ```bash
 make smoke
 make install-local \\
-  CPA_PLUGIN_DIR=/absolute/path/to/.cli-proxy-api/plugins/darwin/arm64 \\
-  CPA_PLUGIN_VERSION=0.1.5
+  CPA_PLUGIN_DIR=/absolute/path/to/.cli-proxy-api/plugins/darwin/arm64
 ```
 
-`install-local` 会把原有同版本文件移到 `backups` 目录，然后复制当前工作区的 `bin/cpa-billing-management.dylib`。以后重新执行 `make install-local` 并重启 CLIProxyAPI 即可加载新构建；账单数据和插件配置不会被覆盖。
+`install-local` 会直接覆盖当前 Tag 对应的同版本插件文件，不创建本地备份。以后重新执行 `make install-local` 并重启 CLIProxyAPI 即可加载新构建；账单数据库和插件配置不会被修改。
 
 启动 CLIProxyAPI 后，在管理页进入“费用统计”查看账单，或进入“模型费用”维护价格。管理 API 路由为：
 
@@ -90,6 +102,8 @@ make install-local \\
 - `PUT /v0/management/cpa-billing-management/prices`
 - `POST /v0/management/cpa-billing-management/prices/sync`
 - `POST /v0/management/cpa-billing-management/reset`
+
+`POST /v0/management/cpa-billing-management/prices/sync` 默认使用 LiteLLM；模型费用页面可选择 LiteLLM、Models.dev 或 OpenRouter，并通过 `source=litellm`、`source=models.dev` 或 `source=openrouter` 查询参数指定来源。同步只下载公开价格目录，不会上传本地账单数据；不同来源的价格单位会统一转换为当前币种/每百万 token。
 
 插件资源页面为：
 

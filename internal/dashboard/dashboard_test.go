@@ -11,7 +11,7 @@ func TestRenderContainsBillingDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, expected := range []string{"CPA 费用统计", "按 API Key 汇总", "api_keys", "failed_requests", "耗时/首字", "输入", "缓存", "cached_tokens", "latency_ns", "ttft_ns", "自动刷新", "不刷新", "5 秒", "10 秒", "15 秒", "上一页", "下一页", "recent_events_total", "v0/management/cpa-billing-management/summary", "cli-proxy-auth", "enc::v1::", "Authorization:'Bearer '+MANAGEMENT_KEY", "/management.html#/login"} {
+	for _, expected := range []string{"CPA 费用统计", "按 API Key 汇总", "api_keys", "failed_requests", "耗时/首字", "输入/缓存", "cached_tokens", "latency_ns", "ttft_ns", "自动刷新", "不刷新", "5 秒", "10 秒", "15 秒", "上一页", "下一页", "recent_events_total", "v0/management/cpa-billing-management/summary", "cli-proxy-auth", "enc::v1::", "Authorization:'Bearer '+MANAGEMENT_KEY", "/management.html#/login"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("rendered dashboard does not contain %q", expected)
 		}
@@ -38,7 +38,7 @@ func TestRenderContainsSeparateModelCostDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, expected := range []string{"CPA 模型费用", "模型价格规则", "同步上游价格", "新增规则", "保存模型费用", "输入 / 1M", "输出 / 1M", "v0/management/cpa-billing-management/prices", "/sync", "placeholder=\"例如：openai/gpt-4o\"", "Number.isFinite", "cli-proxy-auth", "enc::v1::", "Authorization:'Bearer '+MANAGEMENT_KEY", "/management.html#/login", "USD"} {
+	for _, expected := range []string{"CPA 模型费用", "模型价格规则", "同步上游价格", "价格来源", "LiteLLM 公共目录", "Models.dev 公共目录", "OpenRouter 模型 API", "cpa-billing-pricing-source", "source=", "新增规则", "保存模型费用", "输入 / 1M", "输出 / 1M", "v0/management/cpa-billing-management/prices", "/sync", "placeholder=\"例如：openai/gpt-4o\"", "Number.isFinite", "cli-proxy-auth", "enc::v1::", "Authorization:'Bearer '+MANAGEMENT_KEY", "/management.html#/login", "sync-panel", "sync-controls", "rules-panel", "--muted-bg: #262320", "background: var(--muted-bg)", "font-size: 12px", "font-weight: 500", "USD"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("rendered model-cost dashboard does not contain %q", expected)
 		}
@@ -63,5 +63,42 @@ func TestRenderDoesNotEmbedManagementKey(t *testing.T) {
 	}
 	if strings.Contains(text, "test-management-secret") || strings.Contains(text, "management_key") {
 		t.Fatal("rendered billing dashboard must not embed a configured management key")
+	}
+}
+
+func TestRenderResolvesEmbeddedAssetPlaceholders(t *testing.T) {
+	for name, render := range map[string]func(Data) ([]byte, error){
+		"billing": RenderBilling,
+		"pricing": RenderPricing,
+	} {
+		raw, err := render(Data{})
+		if err != nil {
+			t.Fatalf("render %s page: %v", name, err)
+		}
+		for _, placeholder := range []string{"{{STYLES}}", "{{AUTH_SCRIPT}}", "{{PAGE_SCRIPT}}", "{{INITIAL_JSON}}"} {
+			if strings.Contains(string(raw), placeholder) {
+				t.Fatalf("rendered %s page still contains %s", name, placeholder)
+			}
+		}
+	}
+}
+
+func TestRenderEscapesEmbeddedJSON(t *testing.T) {
+	raw, err := RenderBilling(Data{Summary: map[string]any{"model": "</script><script>alert(1)</script>"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "</script><script>alert(1)</script>") || !strings.Contains(string(raw), `\u003c/script\u003e`) {
+		t.Fatal("embedded dashboard JSON was not escaped")
+	}
+}
+
+func TestPricingRuleHeadersAlignWithInputs(t *testing.T) {
+	raw, err := RenderPricing(Data{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), ".rules th.num { text-align: left; }") {
+		t.Fatal("pricing rule numeric headers must align to the leading edge of their inputs")
 	}
 }

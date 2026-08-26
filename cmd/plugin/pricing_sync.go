@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,49 +10,110 @@ import (
 	"github.com/chyern/CPA-Billing-Management/internal/billing"
 )
 
-// LiteLLM maintains a public model-price catalog with per-token prices. The
-// sync action only downloads this catalog; no local usage data is sent out.
-const upstreamPricingCatalogURL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+const defaultPricingSourceID = "litellm"
 
-type upstreamModelPrice struct {
-	InputCostPerToken           float64 `json:"input_cost_per_token"`
-	OutputCostPerToken          float64 `json:"output_cost_per_token"`
-	CacheReadInputTokenCost     float64 `json:"cache_read_input_token_cost"`
-	CacheCreationInputTokenCost float64 `json:"cache_creation_input_token_cost"`
+type pricingSource struct {
+	ID     string
+	Name   string
+	URL    string
+	Decode func(io.Reader) (*normalizedPriceCatalog, error)
+}
+
+type pricingSourceDescriptor struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+var pricingSources = []pricingSource{
+	{ID: "litellm", Name: "LiteLLM", URL: "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json", Decode: decodeLiteLLMCatalog},
+	{ID: "models.dev", Name: "Models.dev", URL: "https://models.dev/api.json", Decode: decodeModelsDevCatalog},
+	{ID: "openrouter", Name: "OpenRouter", URL: "https://openrouter.ai/api/v1/models", Decode: decodeOpenRouterCatalog},
 }
 
 type upstreamSyncResult struct {
-	Source  string              `json:"source"`
-	Matched int                 `json:"matched"`
-	Added   int                 `json:"added"`
-	Updated int                 `json:"updated"`
-	Rules   []billing.PriceRule `json:"rules"`
+	Source     string              `json:"source"`
+	SourceID   string              `json:"source_id"`
+	SourceName string              `json:"source_name"`
+	Matched    int                 `json:"matched"`
+	Added      int                 `json:"added"`
+	Updated    int                 `json:"updated"`
+	Rules      []billing.PriceRule `json:"rules"`
+}
+
+func availablePricingSources() []pricingSourceDescriptor {
+	result := make([]pricingSourceDescriptor, 0, len(pricingSources))
+	for _, source := range pricingSources {
+		result = append(result, pricingSourceDescriptor{ID: source.ID, Name: source.Name})
+	}
+	return result
+}
+
+func findPricingSource(id string) (pricingSource, bool) {
+	id = strings.ToLower(strings.TrimSpace(id))
+	if id == "" {
+		id = defaultPricingSourceID
+	}
+	for _, source := range pricingSources {
+		if strings.EqualFold(source.ID, id) {
+			return source, true
+		}
+	}
+	return pricingSource{}, false
 }
 
 func syncUpstreamPrices(store *billing.Store) (upstreamSyncResult, error) {
-	client := &http.Client{Timeout: 15 * time.Second}
-	return syncUpstreamPricesWithClient(store, client, upstreamPricingCatalogURL)
+	return syncUpstreamPricesFromSource(store, defaultPricingSourceID)
 }
 
-func syncUpstreamPricesWithClient(store *billing.Store, client *http.Client, source string) (upstreamSyncResult, error) {
-	result := upstreamSyncResult{Source: source}
+func syncUpstreamPricesFromSource(store *billing.Store, sourceID string) (upstreamSyncResult, error) {
+	source, ok := findPricingSource(sourceID)
+	if !ok {
+		return upstreamSyncResult{}, fmt.Errorf("unknown pricing source %q", sourceID)
+	}
+	client := &http.Client{Timeout: 15 * time.Second}
+	return syncUpstreamPricesFromSourceWithClient(store, client, source)
+}
+
+// syncUpstreamPricesWithClient keeps the original LiteLLM test and preview
+// integration usable while the management API selects among multiple sources.
+func syncUpstreamPricesWithClient(store *billing.Store, client *http.Client, sourceURL string) (upstreamSyncResult, error) {
+	source, _ := findPricingSource(defaultPricingSourceID)
+	source.URL = sourceURL
+	return syncUpstreamPricesFromSourceWithClient(store, client, source)
+}
+
+func syncUpstreamPricesFromSourceWithClient(store *billing.Store, client *http.Client, source pricingSource) (upstreamSyncResult, error) {
+	result := upstreamSyncResult{Source: source.URL, SourceID: source.ID, SourceName: source.Name}
 	if store == nil {
 		return result, fmt.Errorf("billing store is unavailable")
 	}
 	if client == nil {
 		client = http.DefaultClient
 	}
-	resp, err := client.Get(source)
+	if source.Decode == nil {
+		return result, fmt.Errorf("pricing source %q has no decoder", source.ID)
+	}
+
+	request, err := http.NewRequest(http.MethodGet, source.URL, nil)
 	if err != nil {
-		return result, fmt.Errorf("download upstream price catalog: %w", err)
+		return result, fmt.Errorf("create %s price request: %w", source.Name, err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return result, fmt.Errorf("upstream price catalog returned %s", resp.Status)
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("User-Agent", "cpa-billing-management/"+pluginVersion)
+	response, err := client.Do(request)
+	if err != nil {
+		return result, fmt.Errorf("download %s price catalog: %w", source.Name, err)
 	}
-	var catalog map[string]upstreamModelPrice
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 32<<20)).Decode(&catalog); err != nil {
-		return result, fmt.Errorf("decode upstream price catalog: %w", err)
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return result, fmt.Errorf("%s price catalog returned %s", source.Name, response.Status)
+	}
+	catalog, err := source.Decode(io.LimitReader(response.Body, 64<<20))
+	if err != nil {
+		return result, fmt.Errorf("decode %s price catalog: %w", source.Name, err)
+	}
+	if catalog == nil || catalog.empty() {
+		return result, fmt.Errorf("%s price catalog is empty", source.Name)
 	}
 
 	rules := store.Rules()
@@ -62,8 +122,8 @@ func syncUpstreamPricesWithClient(store *billing.Store, client *http.Client, sou
 		if model == nil {
 			continue
 		}
-		price, ok := lookupUpstreamPrice(catalog, model.Provider, model.Model)
-		if !ok || !hasUpstreamPrice(price) {
+		price, ok := catalog.lookup(model.Provider, model.Model)
+		if !ok || !hasNormalizedPrice(price) {
 			continue
 		}
 		result.Matched++
@@ -73,10 +133,10 @@ func syncUpstreamPricesWithClient(store *billing.Store, client *http.Client, sou
 		}
 		updatedRule := billing.PriceRule{
 			Match:                   match,
-			InputPerMillion:         price.InputCostPerToken * 1_000_000,
-			OutputPerMillion:        price.OutputCostPerToken * 1_000_000,
-			CacheReadPerMillion:     price.CacheReadInputTokenCost * 1_000_000,
-			CacheCreationPerMillion: price.CacheCreationInputTokenCost * 1_000_000,
+			InputPerMillion:         price.InputPerMillion,
+			OutputPerMillion:        price.OutputPerMillion,
+			CacheReadPerMillion:     price.CacheReadPerMillion,
+			CacheCreationPerMillion: price.CacheCreationPerMillion,
 		}
 		index := findRule(rules, match)
 		if index >= 0 {
@@ -105,25 +165,6 @@ func syncUpstreamPricesWithClient(store *billing.Store, client *http.Client, sou
 	}
 	result.Rules = store.Rules()
 	return result, nil
-}
-
-func lookupUpstreamPrice(catalog map[string]upstreamModelPrice, provider, model string) (upstreamModelPrice, bool) {
-	keys := []string{model}
-	if strings.TrimSpace(provider) != "" {
-		keys = append([]string{provider + "/" + model}, keys...)
-	}
-	for _, key := range keys {
-		for candidate, price := range catalog {
-			if strings.EqualFold(strings.TrimSpace(candidate), strings.TrimSpace(key)) {
-				return price, true
-			}
-		}
-	}
-	return upstreamModelPrice{}, false
-}
-
-func hasUpstreamPrice(price upstreamModelPrice) bool {
-	return price.InputCostPerToken > 0 || price.OutputCostPerToken > 0 || price.CacheReadInputTokenCost > 0 || price.CacheCreationInputTokenCost > 0
 }
 
 func findRule(rules []billing.PriceRule, match string) int {
