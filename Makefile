@@ -17,7 +17,7 @@ endif
 PLUGIN_VERSION ?= $(or $(shell git describe --tags --exact-match --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null | sed 's/^v//'),dev)
 GO_LDFLAGS := -X main.pluginVersion=$(PLUGIN_VERSION)
 
-.PHONY: test build smoke install-local preview clean
+.PHONY: test build smoke migrate-legacy install-local preview clean
 
 test:
 	$(GO) test ./...
@@ -29,6 +29,10 @@ build:
 smoke: build
 	$(CC) -Wall -Wextra -Werror -o $(BIN_DIR)/abi-smoke tests/abi_smoke.c $(DL_LIBS)
 	$(BIN_DIR)/abi-smoke $(BIN_DIR)/$(PLUGIN_ID).$(PLUGIN_EXT) $(PLUGIN_VERSION)
+
+migrate-legacy:
+	@test -n "$(CPA_BILLING_DB)" || (echo "CPA_BILLING_DB is required" && exit 1)
+	$(GO) run ./cmd/migrate-legacy -database "$(CPA_BILLING_DB)"
 
 # Local development installs intentionally overwrite the same versioned file.
 # The SQLite database and plugin configuration are stored separately and are

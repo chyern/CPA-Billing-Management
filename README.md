@@ -8,7 +8,7 @@ CLIProxyAPI 自定义插件：接收 usage 事件，优先使用上游金额，�
 - 上游回调明确包含费用字段时直接使用该金额；
 - 上游未返回金额时，按输入、输出、缓存读取和缓存创建 token 以及模型价格规则估算费用；
 - 支持 `provider/model`、模型名、alias 和 `*` 通配价格规则；
-- 使用 SQLite 持久化账单状态，包含按模型汇总、按 API Key 汇总和最近事件；数据库文件为数据目录下的 `billing.db`，默认目录是操作系统用户配置目录下的 `cliproxyapi/cpa-billing-management`；
+- 使用结构化 SQLite 表持久化设置、价格规则、usage 事件、按模型汇总和按 API Key 汇总；数据库文件为数据目录下的 `billing.db`，默认目录是操作系统用户配置目录下的 `cliproxyapi/cpa-billing-management`；
 - 在 CLIProxyAPI 管理页增加“费用统计”菜单，展示总费用、按模型汇总、按脱敏 API Key 汇总，以及最近请求的总耗时和首 Token 耗时；最近事件支持分页和可选的 5/10/15 秒自动刷新；
 - 在独立的“模型费用”页面编辑价格规则；未匹配价格的事件费用为 0，并标记为“未配置模型费用”。
 - 模型费用页默认不添加价格规则；支持按需从 [LiteLLM 公共模型价格目录](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)、[Models.dev](https://models.dev/) 或 [OpenRouter Models API](https://openrouter.ai/docs/api-reference/list-available-models) 同步当前已使用且可识别的模型，未识别的模型仍可手动配置。
@@ -94,6 +94,15 @@ make install-local \\
 ```
 
 `install-local` 会直接覆盖当前 Tag 对应的同版本插件文件，不创建本地备份。以后重新执行 `make install-local` 并重启 CLIProxyAPI 即可加载新构建；账单数据库和插件配置不会被修改。
+
+从旧版单行 JSON 数据库升级时，先停止 CLIProxyAPI，再单独执行一次迁移：
+
+```bash
+make migrate-legacy \
+  CPA_BILLING_DB=/absolute/path/to/billing.db
+```
+
+迁移命令会把旧 `billing_state.state_json` 转换到 `billing_settings`、`pricing_rules`、`usage_events`、`model_aggregates` 和 `api_key_aggregates` 表，成功后删除旧 `billing_state` 表。插件运行时不包含旧 JSON 格式兼容逻辑；不需要历史数据时可以跳过迁移，插件会初始化一组空的新表。
 
 启动 CLIProxyAPI 后，在管理页进入“费用统计”查看账单，或进入“模型费用”维护价格。管理 API 路由为：
 

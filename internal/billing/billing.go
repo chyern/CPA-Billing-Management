@@ -2,18 +2,16 @@ package billing
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
 const (
-	stateVersion       = 3
+	stateVersion       = 4
 	maxPersistedEvents = 10000
 	defaultCurrency    = "USD"
 )
@@ -37,11 +35,7 @@ func NewStore(dataDir string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("configure billing database: %w", err)
 	}
-	s := &Store{dataDir: dataDir, db: db}
-	s.state = State{
-		Version: stateVersion, Currency: defaultCurrency, Rules: DefaultRules(),
-		Aggregates: map[string]*Aggregate{}, APIKeyAggregates: map[string]*APIKeyAggregate{},
-	}
+	s := &Store{dataDir: dataDir, db: db, state: emptyState()}
 	if err := s.initDatabase(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -51,6 +45,13 @@ func NewStore(dataDir string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+func emptyState() State {
+	return State{
+		Version: stateVersion, Currency: defaultCurrency, Rules: DefaultRules(),
+		Aggregates: map[string]*Aggregate{}, APIKeyAggregates: map[string]*APIKeyAggregate{},
+	}
 }
 
 func defaultDataDir() string {
@@ -78,87 +79,13 @@ func ResolveDataDir(configured, fallback string) string {
 
 func (s *Store) databasePath() string { return filepath.Join(s.dataDir, "billing.db") }
 
-func (s *Store) initDatabase() error {
-	_, err := s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS billing_state (
-			id INTEGER PRIMARY KEY CHECK (id = 1),
-			state_json BLOB NOT NULL,
-			updated_at TEXT NOT NULL
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("initialize billing database: %w", err)
-	}
-	return nil
-}
-
-func (s *Store) load() error {
-	var raw []byte
-	err := s.db.QueryRow(`SELECT state_json FROM billing_state WHERE id = 1`).Scan(&raw)
-	if err == sql.ErrNoRows {
-		return s.persistLocked()
-	}
-	if err != nil {
-		return fmt.Errorf("read billing state from database: %w", err)
-	}
-	var loaded State
-	if err := json.Unmarshal(raw, &loaded); err != nil {
-		return fmt.Errorf("decode billing state: %w", err)
-	}
-	// Redact secret-like values before loading persisted state.
-	for i := range loaded.Events {
-		loaded.Events[i].Source = MaskSensitiveSource(loaded.Events[i].Source)
-		if loaded.Events[i].APIKeyID == "" && loaded.Events[i].APIKey != "" {
-			loaded.Events[i].APIKeyID = "legacy:" + loaded.Events[i].APIKey
-		}
-	}
-	needsMigration := loaded.Version < stateVersion
-	if needsMigration {
-		loaded.Version = stateVersion
-	}
-	if loaded.Currency == "" {
-		loaded.Currency = defaultCurrency
-	}
-	loaded.Rules = removeLegacyDefaultRules(loaded.Rules)
-	if loaded.Aggregates == nil {
-		loaded.Aggregates = map[string]*Aggregate{}
-	}
-	s.state = loaded
-	if s.state.APIKeyAggregates == nil {
-		s.rebuildAPIKeyAggregatesLocked()
-		needsMigration = true
-	}
-	if needsMigration {
-		if err := s.persistLocked(); err != nil {
-			return fmt.Errorf("migrate billing state: %w", err)
-		}
-	}
-	return nil
-}
-
-func (s *Store) persistLocked() error {
-	s.state.UpdatedAt = time.Now().UTC()
-	raw, err := json.MarshalIndent(s.state, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode billing state: %w", err)
-	}
-	_, err = s.db.Exec(`
-		INSERT INTO billing_state (id, state_json, updated_at) VALUES (1, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at
-	`, raw, s.state.UpdatedAt.Format(time.RFC3339Nano))
-	if err != nil {
-		return fmt.Errorf("write billing state to database: %w", err)
-	}
-	return nil
-}
-
 func (s *Store) Reset() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state.Events = nil
 	s.state.Aggregates = map[string]*Aggregate{}
 	s.state.APIKeyAggregates = map[string]*APIKeyAggregate{}
-	if err := s.persistLocked(); err != nil {
+	if err := s.persistResetLocked(); err != nil {
 		s.lastErr = err
 		return err
 	}
@@ -185,7 +112,7 @@ func (s *Store) ConfigureYAML(raw []byte) {
 	defer s.mu.Unlock()
 	if currency != "" {
 		s.state.Currency = currency
-		if err := s.persistLocked(); err != nil {
+		if err := s.persistSettingsLocked(); err != nil {
 			s.lastErr = err
 		}
 	}

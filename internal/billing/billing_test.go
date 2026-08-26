@@ -1,6 +1,8 @@
 package billing
 
 import (
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -39,12 +41,16 @@ func TestStorePersistsUpstreamUsageCost(t *testing.T) {
 	if event.APIKey != "sk-t••••••-key" || event.LatencyNanos != int64(1500*time.Millisecond) || event.TTFTNanos != int64(250*time.Millisecond) {
 		t.Fatalf("event identity and timing = %+v", event)
 	}
-	raw := persistedStateJSON(t, store)
+	raw := persistedDatabaseText(t, store)
 	if strings.Contains(raw, apiKey) {
 		t.Fatal("persistent billing state must not contain the complete API key")
 	}
-	if !strings.Contains(raw, `"api_key_aggregates"`) {
-		t.Fatal("persistent billing state must include API key aggregates")
+	var apiKeyAggregateCount int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM api_key_aggregates`).Scan(&apiKeyAggregateCount); err != nil {
+		t.Fatal(err)
+	}
+	if apiKeyAggregateCount != 1 {
+		t.Fatalf("persisted API key aggregates = %d, want 1", apiKeyAggregateCount)
 	}
 	reloaded, err := NewStore(filepath.Join(dir, "data"))
 	if err != nil {
@@ -103,19 +109,101 @@ func TestConfigureYAMLIgnoresManagementKey(t *testing.T) {
 	if got := store.Currency(); got != "CNY" {
 		t.Fatalf("currency = %q, want CNY", got)
 	}
-	raw := persistedStateJSON(t, store)
+	raw := persistedDatabaseText(t, store)
 	if strings.Contains(raw, "test-management-secret") || strings.Contains(raw, "management_key") {
 		t.Fatal("management key must not be persisted or configured by billing state")
 	}
 }
 
-func persistedStateJSON(t *testing.T, store *Store) string {
+func persistedDatabaseText(t *testing.T, store *Store) string {
 	t.Helper()
-	var raw []byte
-	if err := store.db.QueryRow(`SELECT state_json FROM billing_state WHERE id = 1`).Scan(&raw); err != nil {
+	queries := []string{
+		`SELECT currency FROM billing_settings`,
+		`SELECT match FROM pricing_rules`,
+		`SELECT provider || ' ' || model || ' ' || alias || ' ' || api_key || ' ' || api_key_id || ' ' || auth_type || ' ' || source || ' ' || priced_by FROM usage_events`,
+		`SELECT provider || ' ' || model FROM model_aggregates`,
+		`SELECT api_key FROM api_key_aggregates`,
+	}
+	var values []string
+	for _, query := range queries {
+		rows, err := store.db.Query(query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			var value string
+			if err := rows.Scan(&value); err != nil {
+				_ = rows.Close()
+				t.Fatal(err)
+			}
+			values = append(values, value)
+		}
+		if err := rows.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return strings.Join(values, "\n")
+}
+
+func TestStoreUsesNormalizedSQLiteTables(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
 		t.Fatal(err)
 	}
-	return string(raw)
+	for _, table := range []string{"billing_settings", "pricing_rules", "usage_events", "model_aggregates", "api_key_aggregates"} {
+		var count int
+		if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("normalized table %s is missing", table)
+		}
+	}
+	var legacyCount int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'billing_state'`).Scan(&legacyCount); err != nil {
+		t.Fatal(err)
+	}
+	if legacyCount != 0 {
+		t.Fatal("new databases must not create the legacy JSON snapshot table")
+	}
+}
+
+func TestStoreDoesNotLoadLegacyJSONSnapshot(t *testing.T) {
+	dataDir := t.TempDir()
+	db, err := sql.Open("sqlite3", filepath.Join(dataDir, "billing.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE billing_state (id INTEGER PRIMARY KEY, state_json BLOB NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	legacyState := State{
+		Version: 3,
+		Rules:   []PriceRule{{Match: "legacy-model", InputPerMillion: 12}},
+		Events:  []UsageEvent{{Model: "legacy-model", TotalTokens: 100}},
+	}
+	raw, err := json.Marshal(legacyState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO billing_state (id, state_json, updated_at) VALUES (1, ?, ?)`, raw, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := NewStore(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if rules := store.Rules(); len(rules) != 0 {
+		t.Fatalf("runtime loaded legacy pricing rules: %+v", rules)
+	}
+	if summary := store.Summary(); summary.Totals.Requests != 0 || len(summary.RecentEvents) != 0 {
+		t.Fatalf("runtime loaded legacy usage data: %+v", summary)
+	}
 }
 
 func TestCalculateCostAndModelPriceFallback(t *testing.T) {
@@ -160,10 +248,6 @@ func TestSummaryAggregatesByAPIKeyAcrossAllEvents(t *testing.T) {
 	keyA := "sk-alpha-sensitive-one"
 	keyB := "sk-beta-sensitive-two"
 	store.HandleUsage(UsageRecord{APIKey: keyA, InputTokens: 10, OutputTokens: 2, TotalTokens: 12, Cost: 1, CostProvided: true})
-	// Simulate an event persisted before stable API key identifiers existed.
-	store.mu.Lock()
-	store.state.Events[0].APIKeyID = "legacy:" + store.state.Events[0].APIKey
-	store.mu.Unlock()
 	store.HandleUsage(UsageRecord{APIKey: keyB, InputTokens: 20, OutputTokens: 3, TotalTokens: 23, Cost: 2, CostProvided: true})
 	store.HandleUsage(UsageRecord{APIKey: keyA, InputTokens: 30, OutputTokens: 4, TotalTokens: 34, Cost: 3, CostProvided: true, Failed: true})
 	store.HandleUsage(UsageRecord{InputTokens: 40, TotalTokens: 40})

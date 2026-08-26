@@ -18,9 +18,10 @@ func (s *Store) HandleUsage(record UsageRecord) {
 	if len(s.state.Events) > maxPersistedEvents {
 		s.state.Events = append([]UsageEvent(nil), s.state.Events[len(s.state.Events)-maxPersistedEvents:]...)
 	}
+	modelKey := aggregateKey(event.Provider, event.Model)
 	s.addModelAggregateLocked(event, priced)
-	s.addAPIKeyAggregateLocked(event)
-	if err := s.persistLocked(); err != nil {
+	apiKey := s.addAPIKeyAggregateLocked(event)
+	if err := s.persistUsageLocked(event, modelKey, apiKey); err != nil {
 		s.lastErr = err
 	}
 }
@@ -59,7 +60,7 @@ func usageEventFromRecord(record UsageRecord, cost float64, pricedBy string) Usa
 	}
 }
 
-func (s *Store) addAPIKeyAggregateLocked(event UsageEvent) {
+func (s *Store) addAPIKeyAggregateLocked(event UsageEvent) string {
 	if s.state.APIKeyAggregates == nil {
 		s.state.APIKeyAggregates = map[string]*APIKeyAggregate{}
 	}
@@ -67,10 +68,7 @@ func (s *Store) addAPIKeyAggregateLocked(event UsageEvent) {
 	if label == "" {
 		label = "未提供"
 	}
-	legacyKey, groupKey := "legacy:"+label, event.APIKeyID
-	if _, legacyExists := s.state.APIKeyAggregates[legacyKey]; legacyExists || groupKey == "" {
-		groupKey = legacyKey
-	}
+	groupKey := event.APIKeyID
 	aggregate := s.state.APIKeyAggregates[groupKey]
 	if aggregate == nil {
 		aggregate = &APIKeyAggregate{APIKey: label}
@@ -86,26 +84,7 @@ func (s *Store) addAPIKeyAggregateLocked(event UsageEvent) {
 	aggregate.CachedTokens += event.CachedTokens
 	aggregate.TotalTokens += event.TotalTokens
 	aggregate.Cost += event.Cost
-}
-
-func (s *Store) rebuildAPIKeyAggregatesLocked() {
-	s.state.APIKeyAggregates = map[string]*APIKeyAggregate{}
-	legacyLabels := make(map[string]struct{})
-	for _, event := range s.state.Events {
-		if strings.HasPrefix(event.APIKeyID, "legacy:") && event.APIKey != "" {
-			legacyLabels[event.APIKey] = struct{}{}
-		}
-	}
-	for _, event := range s.state.Events {
-		label := strings.TrimSpace(event.APIKey)
-		if label == "" {
-			label = "未提供"
-		}
-		if _, legacy := legacyLabels[label]; legacy {
-			event.APIKeyID = "legacy:" + label
-		}
-		s.addAPIKeyAggregateLocked(event)
-	}
+	return groupKey
 }
 
 func aggregateKey(provider, model string) string {

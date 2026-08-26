@@ -48,7 +48,7 @@ func (s *Store) SetRules(rules []PriceRule) error {
 	defer s.mu.Unlock()
 	s.state.Rules = append([]PriceRule{}, rules...)
 	s.recalculateLocked()
-	if err := s.persistLocked(); err != nil {
+	if err := s.persistFullStateLocked(); err != nil {
 		s.lastErr = err
 		return err
 	}
@@ -74,18 +74,6 @@ func validateRules(rules []PriceRule) error {
 		}
 	}
 	return nil
-}
-
-func removeLegacyDefaultRules(rules []PriceRule) []PriceRule {
-	filtered := make([]PriceRule, 0, len(rules))
-	for _, rule := range rules {
-		match := strings.ToLower(strings.TrimSpace(rule.Match))
-		if (match == "*" || match == "model-name") && rule.InputPerMillion == 0 && rule.OutputPerMillion == 0 && rule.CacheReadPerMillion == 0 && rule.CacheCreationPerMillion == 0 {
-			continue
-		}
-		filtered = append(filtered, rule)
-	}
-	return filtered
 }
 
 func (s *Store) recalculateLocked() {
