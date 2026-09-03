@@ -38,6 +38,16 @@ function valueFor(rule, key) {
     : Number(rule[key]);
 }
 
+function filterRules() {
+  const input = document.getElementById('ruleSearch');
+  const query = (input && input.value || '').trim().toLowerCase();
+  document.querySelectorAll('#rules tbody tr').forEach(row => {
+    const matchInput = row.querySelector('input.match');
+    const text = (matchInput ? matchInput.value : '').toLowerCase();
+    row.style.display = !query || text.includes(query) ? '' : 'none';
+  });
+}
+
 function renderRules() {
   const rows = rules.map((rule, index) =>
     (() => {
@@ -49,7 +59,8 @@ function renderRules() {
         return match === providerModel || match === String(model.model || '').trim().toLowerCase();
       });
       const readonly = catalogRule ? ' readonly title="模型名称来自 CLIProxyAPI 模型列表"' : '';
-      return '<tr data-i="' + index + '">' + '<td><div class="rule-match"><input class="match" data-k="match" placeholder="例如：openai/gpt-4o" value="' + (rule._draft ? '' : escapeHTML(rule.match)) + '"' + readonly + '>' + badge + '</div></td>'
+      const trCls = change ? ' class="rule-row-changed"' : '';
+      return '<tr data-i="' + index + '"' + trCls + '>' + '<td><div class="rule-match"><input class="match" data-k="match" placeholder="例如：openai/gpt-4o" value="' + (rule._draft ? '' : escapeHTML(rule.match)) + '"' + readonly + '>' + badge + '</div></td>'
       + '<td><input data-k="input_per_million" type="number" min="0" step="0.000001" placeholder="例如：2.5" value="' + valueFor(rule, 'input_per_million') + '"></td>'
       + '<td><input data-k="output_per_million" type="number" min="0" step="0.000001" placeholder="例如：10" value="' + valueFor(rule, 'output_per_million') + '"></td>'
       + '<td><input data-k="cache_read_per_million" type="number" min="0" step="0.000001" placeholder="例如：0.25" value="' + valueFor(rule, 'cache_read_per_million') + '"></td>'
@@ -60,6 +71,7 @@ function renderRules() {
   ).join('');
 
   document.getElementById('rules').innerHTML = '<table><thead><tr><th>匹配</th><th class="num">输入 / 1M</th><th class="num">输出 / 1M</th><th class="num">缓存读取 / 1M</th><th class="num">缓存创建 / 1M</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  filterRules();
 }
 
 function catalogPriceValue(model, key) {
@@ -151,8 +163,14 @@ function validateRules() {
 
 function showStatus(message, error = false) {
   const element = document.getElementById('status');
-  element.textContent = message;
-  element.className = 'muted status' + (error ? ' error' : '');
+  const dot = document.getElementById('statusDot');
+  if (element) {
+    element.textContent = message;
+    element.className = 'muted status' + (error ? ' error' : '');
+  }
+  if (dot) {
+    dot.className = 'status-dot' + (error ? ' error' : '');
+  }
 }
 
 async function requestPricing(url = PRICING_API, options = {}) {
@@ -328,9 +346,27 @@ syncButton.onclick = async () => {
 
 document.getElementById('add').onclick = () => {
   readRules();
+  const searchInput = document.getElementById('ruleSearch');
+  if (searchInput && searchInput.value) {
+    searchInput.value = '';
+  }
   rules.push({_draft: true, match: '', input_per_million: null, output_per_million: null, cache_read_per_million: null, cache_creation_per_million: null});
   renderRules();
 };
+
+const ruleSearchInput = document.getElementById('ruleSearch');
+if (ruleSearchInput) {
+  ruleSearchInput.addEventListener('input', filterRules);
+}
+
+const navBilling = document.getElementById('navBilling');
+if (navBilling) {
+  if (window.location.pathname.startsWith('/v0/resource/plugins/')) {
+    navBilling.href = '/v0/resource/plugins/cpa-billing-management/billing';
+  } else {
+    navBilling.href = '/';
+  }
+}
 
 document.getElementById('save').onclick = async () => {
   try {

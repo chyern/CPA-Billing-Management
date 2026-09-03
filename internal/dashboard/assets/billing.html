@@ -8,28 +8,46 @@
 </head>
 <body>
   <header class="header">
-    <div>
-      <h1>CPA 费用统计</h1>
+    <div class="header-brand">
+      <div class="header-top">
+        <h1>CPA 费用统计 <span class="title-badge">Billing</span></h1>
+        <nav class="nav-tabs" aria-label="页面切换">
+          <a href="javascript:void(0)" class="nav-tab active">费用统计</a>
+          <a href="./pricing" id="navPricing" class="nav-tab">模型费用</a>
+        </nav>
+      </div>
       <div class="muted">上游明确返回金额时优先使用，否则按“模型费用”中的每百万 token 价格估算</div>
     </div>
     <div class="toolbar">
-      <span class="muted">自动刷新</span>
-      <select id="autoRefresh" aria-label="自动刷新">
-        <option value="0">不刷新</option>
-        <option value="5">5 秒</option>
-        <option value="10">10 秒</option>
-        <option value="15" selected>15 秒</option>
-      </select>
-      <span id="status" class="muted status"></span>
+      <div class="refresh-control">
+        <span class="muted">自动刷新</span>
+        <select id="autoRefresh" aria-label="自动刷新">
+          <option value="0">不刷新</option>
+          <option value="5">5 秒</option>
+          <option value="10">10 秒</option>
+          <option value="15" selected>15 秒</option>
+        </select>
+      </div>
+      <div class="status-wrap">
+        <span id="statusDot" class="status-dot"></span>
+        <span id="status" class="muted status"></span>
+      </div>
     </div>
   </header>
 
   <main>
     <section class="panel query-panel">
       <div class="query-controls">
-        <label class="field" for="startDate"><span>开始日期</span><input id="startDate" type="date"></label>
-        <label class="field" for="endDate"><span>结束日期</span><input id="endDate" type="date"></label>
-        <button class="btn primary" id="query">查询</button>
+        <div class="quick-dates" id="quickDates">
+          <button type="button" class="pill-btn active" data-days="0">今天</button>
+          <button type="button" class="pill-btn" data-days="7">近 7 天</button>
+          <button type="button" class="pill-btn" data-days="30">近 30 天</button>
+        </div>
+        <div class="date-inputs-wrap">
+          <label class="field" for="startDate"><span>开始日期</span><input id="startDate" type="date"></label>
+          <label class="field" for="endDate"><span>结束日期</span><input id="endDate" type="date"></label>
+          <button class="btn primary" id="query">查询</button>
+        </div>
       </div>
     </section>
     <section id="cards" class="grid"></section>

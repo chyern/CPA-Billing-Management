@@ -8,11 +8,22 @@
 </head>
 <body>
   <header class="header">
-    <div>
-      <h1>CPA 模型费用</h1>
+    <div class="header-brand">
+      <div class="header-top">
+        <h1>CPA 模型费用 <span class="title-badge">Pricing</span></h1>
+        <nav class="nav-tabs" aria-label="页面切换">
+          <a href="./billing" id="navBilling" class="nav-tab">费用统计</a>
+          <a href="javascript:void(0)" class="nav-tab active">模型费用</a>
+        </nav>
+      </div>
       <div class="muted">CLIProxyAPI 模型目录中的全部模型都会列出；未配置价格的模型先显示为 0。上游明确返回金额时不会被这里的规则覆盖</div>
     </div>
-    <div class="toolbar"><span id="status" class="muted status"></span></div>
+    <div class="toolbar">
+      <div class="status-wrap">
+        <span id="statusDot" class="status-dot"></span>
+        <span id="status" class="muted status"></span>
+      </div>
+    </div>
   </header>
 
   <main>
@@ -48,12 +59,15 @@
     </section>
 
     <section class="panel rules-panel">
-      <div class="panel-heading">
+      <div class="rules-panel-header">
         <div>
           <h2>模型价格规则</h2>
           <p class="muted">匹配优先级：provider/model → model → alias → *。价格单位为当前币种 / 1M token，费用在事件生成时计算，后续修改价格不会影响历史事件。</p>
         </div>
         <div class="actions">
+          <div class="rules-search-wrap">
+            <input type="text" id="ruleSearch" placeholder="按模型名称或通配快速过滤...">
+          </div>
           <button class="btn" id="add">新增规则</button>
           <button class="btn primary" id="save">保存模型费用</button>
         </div>
