@@ -56,7 +56,6 @@ func (s *Store) SetRules(rules []PriceRule) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state.Rules = append([]PriceRule{}, rules...)
-	s.recalculateLocked()
 	if err := s.persistFullStateLocked(); err != nil {
 		s.lastErr = err
 		return err
@@ -83,22 +82,6 @@ func validateRules(rules []PriceRule) error {
 		}
 	}
 	return nil
-}
-
-func (s *Store) recalculateLocked() {
-	s.state.Aggregates = map[string]*Aggregate{}
-	s.state.APIKeyAggregates = map[string]*APIKeyAggregate{}
-	for index := range s.state.Events {
-		event := &s.state.Events[index]
-		record := UsageRecord{Provider: event.Provider, Model: event.Model, Alias: event.Alias, InputTokens: event.InputTokens, OutputTokens: event.OutputTokens, ReasoningTokens: event.ReasoningTokens, CachedTokens: event.CachedTokens, CacheReadTokens: event.CacheReadTokens, CacheCreationTokens: event.CacheCreationTokens, TotalTokens: event.TotalTokens, Failed: event.Failed}
-		matched := true
-		if !strings.EqualFold(event.PricedBy, "upstream") {
-			rule, localMatched := s.matchRule(record)
-			event.Cost, event.PricedBy, matched = CalculateCost(record, rule), rule.Match, localMatched
-		}
-		s.addModelAggregateLocked(*event, matched)
-		s.addAPIKeyAggregateLocked(*event)
-	}
 }
 
 func (s *Store) addModelAggregateLocked(event UsageEvent, priced bool) {

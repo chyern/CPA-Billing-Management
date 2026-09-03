@@ -243,8 +243,8 @@ func TestPluginBillingFlow(t *testing.T) {
 	if err := json.Unmarshal(managementBody(t, summaryRaw), &summary); err != nil {
 		t.Fatal(err)
 	}
-	if summary.Totals.Cost != 12 {
-		t.Fatalf("recalculated hybrid cost = %v, want upstream 3 plus model estimate 9", summary.Totals.Cost)
+	if summary.Totals.Cost != 9 {
+		t.Fatalf("historical hybrid cost changed = %v, want original estimate 6 plus upstream 3", summary.Totals.Cost)
 	}
 }
 

@@ -167,6 +167,7 @@ td.num { font-variant-numeric: tabular-nums; }
 }
 
 .rules input.match { width: 190px; }
+.rules input[readonly] { opacity: .8; cursor: not-allowed; }
 .rule-match { display: flex; align-items: center; gap: 8px; }
 .sync-pill { border-color: #75522e; background: #4b321c; color: #e6c28a; }
 .rules th.num { text-align: left; }

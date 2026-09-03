@@ -43,8 +43,13 @@ function renderRules() {
     (() => {
       const change = syncChanges[String(rule.match || '').toLowerCase()];
       const badge = change ? '<span class="pill sync-pill">' + (change.action === 'add' ? '待新增' : '待更新') + '</span>' : '';
-      return '<tr data-i="' + index + '">'
-      + '<td><div class="rule-match"><input class="match" data-k="match" placeholder="例如：openai/gpt-4o" value="' + (rule._draft ? '' : escapeHTML(rule.match)) + '">' + badge + '</div></td>'
+      const match = String(rule.match || '').trim().toLowerCase();
+      const catalogRule = catalogModels.some(model => {
+        const providerModel = String(model.provider || '').trim().toLowerCase() + '/' + String(model.model || '').trim().toLowerCase();
+        return match === providerModel || match === String(model.model || '').trim().toLowerCase();
+      });
+      const readonly = catalogRule ? ' readonly title="模型名称来自 CLIProxyAPI 模型列表"' : '';
+      return '<tr data-i="' + index + '">' + '<td><div class="rule-match"><input class="match" data-k="match" placeholder="例如：openai/gpt-4o" value="' + (rule._draft ? '' : escapeHTML(rule.match)) + '"' + readonly + '>' + badge + '</div></td>'
       + '<td><input data-k="input_per_million" type="number" min="0" step="0.000001" placeholder="例如：2.5" value="' + valueFor(rule, 'input_per_million') + '"></td>'
       + '<td><input data-k="output_per_million" type="number" min="0" step="0.000001" placeholder="例如：10" value="' + valueFor(rule, 'output_per_million') + '"></td>'
       + '<td><input data-k="cache_read_per_million" type="number" min="0" step="0.000001" placeholder="例如：0.25" value="' + valueFor(rule, 'cache_read_per_million') + '"></td>'
@@ -340,7 +345,7 @@ document.getElementById('save').onclick = async () => {
     syncChanges = {};
     renderRules();
     renderCatalog();
-    showStatus('模型费用已保存，历史估算已更新');
+    showStatus('模型费用已保存，新请求将使用最新价格，历史费用保持不变');
   } catch (error) {
     showStatus('保存失败：' + error.message, true);
   }

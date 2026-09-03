@@ -289,7 +289,7 @@ func TestMissingUpstreamCostIsMarkedUnpriced(t *testing.T) {
 	}
 }
 
-func TestSetRulesRecalculatesOnlyEstimatedEvents(t *testing.T) {
+func TestSetRulesDoesNotRecalculateHistoricalEvents(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -299,8 +299,12 @@ func TestSetRulesRecalculatesOnlyEstimatedEvents(t *testing.T) {
 	if err := store.SetRules([]PriceRule{{Match: "future-model", InputPerMillion: 7}}); err != nil {
 		t.Fatal(err)
 	}
+	if got := store.Summary().Totals.Cost; math.Abs(got-2.5) > 1e-12 {
+		t.Fatalf("historical mixed cost changed after price update = %v, want 2.5", got)
+	}
+	store.HandleUsage(UsageRecord{Provider: "codex", Model: "future-model", InputTokens: 1_000_000, TotalTokens: 1_000_000})
 	if got := store.Summary().Totals.Cost; math.Abs(got-9.5) > 1e-12 {
-		t.Fatalf("recalculated mixed cost = %v, want 9.5", got)
+		t.Fatalf("new event did not use updated price = %v, want 9.5 including historical 2.5", got)
 	}
 }
 

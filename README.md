@@ -7,6 +7,7 @@ CLIProxyAPI 自定义插件：接收 usage 事件，优先使用上游金额，�
 - 监听 CLIProxyAPI `UsagePlugin` 事件；
 - 上游回调明确包含费用字段时直接使用该金额；
 - 上游未返回金额时，按输入、输出、缓存读取和缓存创建 token 以及模型价格规则估算费用；
+- 费用在 usage 事件写入时计算并固化，后续修改模型价格只影响新事件，不会联动修改历史费用；
 - 支持 `provider/model`、模型名、alias 和 `*` 通配价格规则；
 - 使用结构化 SQLite 表持久化设置、价格规则、usage 事件、按模型汇总和按 API Key 汇总；数据库文件为数据目录下的 `billing.db`，默认目录是操作系统用户配置目录下的 `cliproxyapi/cpa-billing-management`；
 - 在 CLIProxyAPI 管理页增加“费用统计”菜单，展示总费用、按模型汇总、按脱敏 API Key 汇总，以及最近请求的总耗时和首 Token 耗时；最近事件支持分页和可选的 5/10/15 秒自动刷新；
