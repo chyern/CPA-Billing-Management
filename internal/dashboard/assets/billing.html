@@ -25,6 +25,13 @@
   </header>
 
   <main>
+    <section class="panel query-panel">
+      <div class="query-controls">
+        <label class="field" for="startDate"><span>开始日期</span><input id="startDate" type="date"></label>
+        <label class="field" for="endDate"><span>结束日期</span><input id="endDate" type="date"></label>
+        <button class="btn primary" id="query">查询</button>
+      </div>
+    </section>
     <section id="cards" class="grid"></section>
     <section class="panel"><h2>按模型汇总</h2><div id="models"></div></section>
     <section class="panel"><h2>按 API Key 汇总</h2><div id="apiKeys"></div></section>

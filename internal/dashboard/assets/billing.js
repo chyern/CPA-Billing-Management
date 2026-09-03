@@ -2,6 +2,18 @@ const SUMMARY_API = '/v0/management/cpa-billing-management/summary';
 const PAGE_SIZE = 20;
 
 let refreshTimer = null;
+const localDate = date => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return year + '-' + month + '-' + day;
+};
+const startDate = document.getElementById('startDate');
+const endDate = document.getElementById('endDate');
+const queryButton = document.getElementById('query');
+const today = localDate(new Date());
+startDate.value = today;
+endDate.value = today;
 let state = JSON.parse(document.getElementById('initial').textContent).summary || {
   currency: 'USD',
   totals: {},
@@ -94,7 +106,10 @@ async function loadPage(page) {
   if (!requireManagementKey()) return;
   const pageNumber = Math.max(1, page);
   try {
-    const response = await fetch(SUMMARY_API + '?page=' + pageNumber + '&page_size=' + PAGE_SIZE, {
+    const params = new URLSearchParams({page: String(pageNumber), page_size: String(PAGE_SIZE)});
+    if (startDate.value) params.set('start', startDate.value);
+    if (endDate.value) params.set('end', endDate.value);
+    const response = await fetch(SUMMARY_API + '?' + params.toString(), {
       credentials: 'same-origin',
       headers: authHeaders(),
     });
@@ -111,6 +126,14 @@ async function loadPage(page) {
     showStatus('更新失败：' + (error.message || '请求失败'), true);
   }
 }
+
+queryButton.onclick = () => {
+  if (startDate.value && endDate.value && endDate.value < startDate.value) {
+    showStatus('查询失败：结束日期不能早于开始日期', true);
+    return;
+  }
+  loadPage(1);
+};
 
 function configureAutoRefresh(seconds) {
   if (refreshTimer) clearInterval(refreshTimer);

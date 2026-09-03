@@ -33,7 +33,8 @@ body {
 .toolbar,
 .actions,
 .pager,
-.sync-controls {
+.sync-controls,
+.query-controls {
   display: flex;
 }
 
@@ -94,6 +95,10 @@ select {
   padding-top: 16px;
   border-top: 1px solid var(--border-color);
 }
+
+.query-controls { align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.query-controls input[type="date"] { width: 170px; }
+.query-panel { padding-block: 14px; }
 
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 250px; }
 .field span { color: var(--text-secondary); font-size: 12px; line-height: 18px; font-weight: 600; }
@@ -211,4 +216,8 @@ td.num { font-variant-numeric: tabular-nums; }
   .field { min-width: min(100%, 280px); }
   .sync-controls { align-items: stretch; flex-direction: column; }
   .sync-controls .btn { width: 100%; }
+  .query-controls { align-items: stretch; flex-direction: column; }
+  .query-controls .field,
+  .query-controls input[type="date"],
+  .query-controls .btn { width: 100%; box-sizing: border-box; }
 }

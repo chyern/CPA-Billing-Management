@@ -330,3 +330,18 @@ func TestSummaryPagePaginatesRecentEventsNewestFirstByPage(t *testing.T) {
 		t.Fatalf("clamped last page = page %d, events %+v", last.RecentEventsPage, last.RecentEvents)
 	}
 }
+
+func TestSummaryPageRangeFiltersEventsAndAggregates(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.HandleUsage(UsageRecord{Provider: "test", Model: "yesterday", RequestedAt: time.Date(2026, 9, 2, 23, 59, 0, 0, time.Local), Cost: 1, CostProvided: true})
+	store.HandleUsage(UsageRecord{Provider: "test", Model: "today", RequestedAt: time.Date(2026, 9, 3, 8, 0, 0, 0, time.Local), Cost: 2, CostProvided: true})
+	start := time.Date(2026, 9, 3, 0, 0, 0, 0, time.Local)
+	end := start.AddDate(0, 0, 1)
+	summary := store.SummaryPageRange(1, 20, start, end)
+	if summary.Totals.Requests != 1 || summary.Totals.Cost != 2 || summary.RecentEventsTotal != 1 || len(summary.Models) != 1 || summary.Models[0].Model != "today" {
+		t.Fatalf("filtered summary = %+v", summary)
+	}
+}

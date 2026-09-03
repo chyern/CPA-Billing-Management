@@ -26,7 +26,11 @@ func handleManagement(store *billing.Store, raw []byte) ([]byte, error) {
 	case req.Method == http.MethodGet && strings.HasSuffix(path, "/summary"):
 		page := billing.ParseInt(queryValue(req.Query, "page"))
 		pageSize := billing.ParseInt(queryValue(req.Query, "page_size"))
-		return jsonManagementResponse(store.SummaryPage(int(page), int(pageSize)))
+		start, end, err := summaryTimeRange(req.Query)
+		if err != nil {
+			return jsonManagementError(http.StatusBadRequest, err.Error())
+		}
+		return jsonManagementResponse(store.SummaryPageRange(int(page), int(pageSize), start, end))
 	case req.Method == http.MethodGet && strings.HasSuffix(path, "/prices"):
 		return pricingSnapshotResponse(store)
 	case req.Method == http.MethodPost && strings.HasSuffix(path, "/prices/sync"):
@@ -41,6 +45,35 @@ func handleManagement(store *billing.Store, raw []byte) ([]byte, error) {
 	default:
 		return jsonManagementError(http.StatusNotFound, "unknown management route")
 	}
+}
+
+func summaryTimeRange(query map[string][]string) (time.Time, time.Time, error) {
+	start, err := parseSummaryDate(queryValue(query, "start"))
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("invalid start date: %w", err)
+	}
+	end, err := parseSummaryDate(queryValue(query, "end"))
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("invalid end date: %w", err)
+	}
+	if !start.IsZero() && !end.IsZero() && end.Before(start) {
+		return time.Time{}, time.Time{}, fmt.Errorf("end date must not be before start date")
+	}
+	if !end.IsZero() {
+		end = end.AddDate(0, 0, 1)
+	}
+	return start, end, nil
+}
+
+func parseSummaryDate(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, nil
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed, nil
+	}
+	return time.ParseInLocation("2006-01-02", value, time.Local)
 }
 
 func pricingSnapshotResponse(store *billing.Store) ([]byte, error) {
