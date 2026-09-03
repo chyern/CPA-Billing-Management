@@ -40,6 +40,15 @@ func (s *Store) Rules() []PriceRule {
 	return append([]PriceRule(nil), s.state.Rules...)
 }
 
+// ResolvePriceRule returns the effective rule for a provider/model pair.
+// It lets management views distinguish an alias or wildcard rule from a
+// model that has no price configuration at all.
+func (s *Store) ResolvePriceRule(provider, model string) (PriceRule, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.matchRule(UsageRecord{Provider: provider, Model: model})
+}
+
 func (s *Store) SetRules(rules []PriceRule) error {
 	if err := validateRules(rules); err != nil {
 		return err

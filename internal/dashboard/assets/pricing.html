@@ -10,7 +10,7 @@
   <header class="header">
     <div>
       <h1>CPA 模型费用</h1>
-      <div class="muted">配置模型每百万 token 的估算价格；上游明确返回金额时不会被这里的规则覆盖</div>
+      <div class="muted">CLIProxyAPI 模型目录中的全部模型都会列出；未配置价格的模型先显示为 0。上游明确返回金额时不会被这里的规则覆盖</div>
     </div>
     <div class="toolbar"><span id="status" class="muted status"></span></div>
   </header>
@@ -20,7 +20,7 @@
       <div class="panel-heading">
         <div>
           <h2>同步上游价格</h2>
-          <p class="muted">从公开价格目录导入模型价格，匹配已有规则后自动新增或更新。</p>
+          <p class="muted">先获取本地与上游的价格差异，确认后点击“保存模型费用”应用。</p>
         </div>
         <span class="pill neutral">可选渠道</span>
       </div>
@@ -33,8 +33,18 @@
             <option value="openrouter">OpenRouter 模型 API</option>
           </select>
         </label>
-        <button class="btn primary" id="sync">同步上游价格</button>
+        <button class="btn primary" id="sync">获取价格差异</button>
       </div>
+    </section>
+
+    <section class="panel catalog-panel" hidden>
+      <div class="panel-heading">
+        <div>
+          <h2>可用模型目录</h2>
+          <p class="muted">与 CLIProxyAPI 首页“模型”卡片相同，列出当前代理端点暴露的模型；未配置价格的模型按 0 展示。</p>
+        </div>
+      </div>
+      <div id="catalog" class="rules"></div>
     </section>
 
     <section class="panel rules-panel">

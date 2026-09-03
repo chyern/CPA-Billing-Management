@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/chyern/CPA-Billing-Management/internal/abi"
 	"github.com/chyern/CPA-Billing-Management/internal/billing"
@@ -43,12 +44,72 @@ func handleManagement(store *billing.Store, raw []byte) ([]byte, error) {
 }
 
 func pricingSnapshotResponse(store *billing.Store) ([]byte, error) {
+	rules := pricingRulesWithObservedModels(store)
 	return jsonManagementResponse(map[string]any{
 		"currency":        store.Currency(),
-		"rules":           store.Rules(),
+		"rules":           rules,
+		"models":          observedPricingModels(store),
 		"default_source":  defaultPricingSourceID,
 		"pricing_sources": availablePricingSources(),
 	})
+}
+
+type pricingCatalogModel struct {
+	Provider   string            `json:"provider"`
+	Model      string            `json:"model"`
+	Configured bool              `json:"configured"`
+	Price      billing.PriceRule `json:"price"`
+}
+
+func observedPricingModels(store *billing.Store) []pricingCatalogModel {
+	models := store.SummaryPage(1, 100).Models
+	result := make([]pricingCatalogModel, 0, len(models))
+	for _, model := range models {
+		if model == nil || strings.TrimSpace(model.Model) == "" {
+			continue
+		}
+		price, configured := store.ResolvePriceRule(model.Provider, model.Model)
+		if !configured {
+			price = billing.PriceRule{Match: model.Model}
+		}
+		result = append(result, pricingCatalogModel{Provider: model.Provider, Model: model.Model, Configured: configured, Price: price})
+	}
+	return result
+}
+
+// pricingRulesWithObservedModels keeps the editor useful before every model
+// has a manual price. Unconfigured observed models are shown at zero, while
+// existing exact, alias, and wildcard rules remain effective.
+func pricingRulesWithObservedModels(store *billing.Store) []billing.PriceRule {
+	rules := store.Rules()
+	models := store.SummaryPage(1, 100).Models
+	for _, model := range models {
+		if model == nil {
+			continue
+		}
+		if _, configured := store.ResolvePriceRule(model.Provider, model.Model); configured {
+			continue
+		}
+		match := strings.TrimSpace(model.Model)
+		if provider := strings.TrimSpace(model.Provider); provider != "" {
+			match = provider + "/" + match
+		}
+		if findRule(rules, match) >= 0 {
+			continue
+		}
+		zeroRule := billing.PriceRule{Match: match}
+		insertAt := len(rules)
+		for i, rule := range rules {
+			if strings.TrimSpace(rule.Match) == "*" {
+				insertAt = i
+				break
+			}
+		}
+		rules = append(rules, billing.PriceRule{})
+		copy(rules[insertAt+1:], rules[insertAt:])
+		rules[insertAt] = zeroRule
+	}
+	return rules
 }
 
 func handlePricingSync(store *billing.Store, req abi.ManagementRequest) ([]byte, error) {
@@ -59,7 +120,25 @@ func handlePricingSync(store *billing.Store, req abi.ManagementRequest) ([]byte,
 	if _, ok := findPricingSource(sourceID); !ok {
 		return jsonManagementError(http.StatusBadRequest, fmt.Sprintf("unknown pricing source %q", sourceID))
 	}
-	result, err := syncUpstreamPricesFromSource(store, sourceID)
+	source, _ := findPricingSource(sourceID)
+	preview := queryValue(req.Query, "preview") == "1" || strings.EqualFold(queryValue(req.Query, "preview"), "true")
+	var result upstreamSyncResult
+	var err error
+	if preview {
+		rules := store.Rules()
+		if len(req.Body) > 0 {
+			var payload struct {
+				Rules []billing.PriceRule `json:"rules"`
+			}
+			if decodeErr := json.Unmarshal(req.Body, &payload); decodeErr != nil {
+				return jsonManagementError(http.StatusBadRequest, decodeErr.Error())
+			}
+			rules = payload.Rules
+		}
+		result, err = previewUpstreamPricesFromSourceWithClient(store, &http.Client{Timeout: 15 * time.Second}, source, rules)
+	} else {
+		result, err = syncUpstreamPricesFromSource(store, sourceID)
+	}
 	if err != nil {
 		return jsonManagementError(http.StatusBadGateway, err.Error())
 	}

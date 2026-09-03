@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -49,10 +50,10 @@ func (p *flexiblePrice) UnmarshalJSON(raw []byte) error {
 }
 
 type liteLLMModelPrice struct {
-	InputCostPerToken           flexiblePrice `json:"input_cost_per_token"`
-	OutputCostPerToken          flexiblePrice `json:"output_cost_per_token"`
-	CacheReadInputTokenCost     flexiblePrice `json:"cache_read_input_token_cost"`
-	CacheCreationInputTokenCost flexiblePrice `json:"cache_creation_input_token_cost"`
+	InputCostPerToken           *flexiblePrice `json:"input_cost_per_token"`
+	OutputCostPerToken          *flexiblePrice `json:"output_cost_per_token"`
+	CacheReadInputTokenCost     *flexiblePrice `json:"cache_read_input_token_cost"`
+	CacheCreationInputTokenCost *flexiblePrice `json:"cache_creation_input_token_cost"`
 }
 type modelsDevProvider struct {
 	ID     string                    `json:"id"`
@@ -63,10 +64,10 @@ type modelsDevModel struct {
 	Cost modelsDevCost `json:"cost"`
 }
 type modelsDevCost struct {
-	Input      flexiblePrice `json:"input"`
-	Output     flexiblePrice `json:"output"`
-	CacheRead  flexiblePrice `json:"cache_read"`
-	CacheWrite flexiblePrice `json:"cache_write"`
+	Input      *flexiblePrice `json:"input"`
+	Output     *flexiblePrice `json:"output"`
+	CacheRead  *flexiblePrice `json:"cache_read"`
+	CacheWrite *flexiblePrice `json:"cache_write"`
 }
 type openRouterCatalog struct {
 	Data []openRouterModel `json:"data"`
@@ -76,10 +77,10 @@ type openRouterModel struct {
 	Pricing openRouterPricing `json:"pricing"`
 }
 type openRouterPricing struct {
-	Prompt          flexiblePrice `json:"prompt"`
-	Completion      flexiblePrice `json:"completion"`
-	InputCacheRead  flexiblePrice `json:"input_cache_read"`
-	InputCacheWrite flexiblePrice `json:"input_cache_write"`
+	Prompt          *flexiblePrice `json:"prompt"`
+	Completion      *flexiblePrice `json:"completion"`
+	InputCacheRead  *flexiblePrice `json:"input_cache_read"`
+	InputCacheWrite *flexiblePrice `json:"input_cache_write"`
 }
 
 func decodeLiteLLMCatalog(reader io.Reader) (*normalizedPriceCatalog, error) {
@@ -89,7 +90,12 @@ func decodeLiteLLMCatalog(reader io.Reader) (*normalizedPriceCatalog, error) {
 	}
 	catalog := newNormalizedPriceCatalog()
 	for model, price := range raw {
-		catalog.addExact(model, normalizedModelPrice{InputPerMillion: float64(price.InputCostPerToken) * 1_000_000, OutputPerMillion: float64(price.OutputCostPerToken) * 1_000_000, CacheReadPerMillion: float64(price.CacheReadInputTokenCost) * 1_000_000, CacheCreationPerMillion: float64(price.CacheCreationInputTokenCost) * 1_000_000})
+		if price.InputCostPerToken == nil {
+			continue
+		}
+		if normalized, ok := normalizePriceFields(1_000_000, price.InputCostPerToken, price.OutputCostPerToken, price.CacheReadInputTokenCost, price.CacheCreationInputTokenCost); ok {
+			catalog.addExact(model, normalized)
+		}
 	}
 	return catalog, nil
 }
@@ -102,8 +108,14 @@ func decodeModelsDevCatalog(reader io.Reader) (*normalizedPriceCatalog, error) {
 	catalog := newNormalizedPriceCatalog()
 	for providerKey, provider := range raw {
 		for modelKey, model := range provider.Models {
+			if model.Cost.Input == nil {
+				continue
+			}
 			providerIDs, modelIDs := []string{providerKey, provider.ID}, []string{modelKey, model.ID}
-			price := normalizedModelPrice{InputPerMillion: float64(model.Cost.Input), OutputPerMillion: float64(model.Cost.Output), CacheReadPerMillion: float64(model.Cost.CacheRead), CacheCreationPerMillion: float64(model.Cost.CacheWrite)}
+			price, ok := normalizePriceFields(1, model.Cost.Input, model.Cost.Output, model.Cost.CacheRead, model.Cost.CacheWrite)
+			if !ok {
+				continue
+			}
 			for _, providerID := range providerIDs {
 				for _, modelID := range modelIDs {
 					if strings.TrimSpace(providerID) != "" && strings.TrimSpace(modelID) != "" {
@@ -130,7 +142,16 @@ func decodeOpenRouterCatalog(reader io.Reader) (*normalizedPriceCatalog, error) 
 	}
 	catalog := newNormalizedPriceCatalog()
 	for _, model := range raw.Data {
-		price := normalizedModelPrice{InputPerMillion: float64(model.Pricing.Prompt) * 1_000_000, OutputPerMillion: float64(model.Pricing.Completion) * 1_000_000, CacheReadPerMillion: float64(model.Pricing.InputCacheRead) * 1_000_000, CacheCreationPerMillion: float64(model.Pricing.InputCacheWrite) * 1_000_000}
+		if model.Pricing.Prompt == nil {
+			continue
+		}
+		if float64(*model.Pricing.Prompt) == 0 && model.Pricing.Completion != nil && float64(*model.Pricing.Completion) > 0 {
+			continue
+		}
+		price, ok := normalizePriceFields(1_000_000, model.Pricing.Prompt, model.Pricing.Completion, model.Pricing.InputCacheRead, model.Pricing.InputCacheWrite)
+		if !ok {
+			continue
+		}
 		catalog.addExact(model.ID, price)
 		catalog.addAlias(lastModelSegment(model.ID), price)
 	}
@@ -189,6 +210,22 @@ func lastModelSegment(value string) string {
 	}
 	return value
 }
-func hasNormalizedPrice(price normalizedModelPrice) bool {
-	return price.InputPerMillion > 0 || price.OutputPerMillion > 0 || price.CacheReadPerMillion > 0 || price.CacheCreationPerMillion > 0
+func normalizePriceFields(scale float64, fields ...*flexiblePrice) (normalizedModelPrice, bool) {
+	values := make([]float64, len(fields))
+	present := false
+	for i, field := range fields {
+		if field == nil {
+			continue
+		}
+		present = true
+		value := float64(*field) * scale
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+			return normalizedModelPrice{}, false
+		}
+		values[i] = value
+	}
+	if !present {
+		return normalizedModelPrice{}, false
+	}
+	return normalizedModelPrice{InputPerMillion: values[0], OutputPerMillion: values[1], CacheReadPerMillion: values[2], CacheCreationPerMillion: values[3]}, true
 }

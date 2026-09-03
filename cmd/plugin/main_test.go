@@ -287,6 +287,62 @@ func TestSyncUpstreamPricesAddsMatchedModels(t *testing.T) {
 	}
 }
 
+func TestPreviewUpstreamPricesDoesNotPersistChanges(t *testing.T) {
+	store, err := billing.NewStore(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.HandleUsage(billing.UsageRecord{Provider: "openai", Model: "gpt-4o", InputTokens: 10, OutputTokens: 5})
+	if err := store.SetRules([]billing.PriceRule{{Match: "openai/gpt-4o", InputPerMillion: 1, OutputPerMillion: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"gpt-4o":{"input_cost_per_token":0.0000025,"output_cost_per_token":0.00001}}`))
+	}))
+	defer server.Close()
+
+	source, _ := findPricingSource("litellm")
+	result, err := previewUpstreamPricesFromSourceWithClient(store, server.Client(), pricingSource{ID: source.ID, Name: source.Name, URL: server.URL, Decode: source.Decode}, store.Rules())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Applied || result.Updated != 1 || len(result.Changes) != 1 {
+		t.Fatalf("preview result = %+v", result)
+	}
+	if got := store.Rules()[0].InputPerMillion; got != 1 {
+		t.Fatalf("preview changed persisted input price to %v", got)
+	}
+	if got := result.Rules[0].InputPerMillion; got != 2.5 {
+		t.Fatalf("preview rules input price = %v, want 2.5", got)
+	}
+}
+
+func TestSyncPreservesFreeModelsAndSkipsNegativeSentinels(t *testing.T) {
+	store, err := billing.NewStore(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.HandleUsage(billing.UsageRecord{Model: "free-model", InputTokens: 1})
+	store.HandleUsage(billing.UsageRecord{Model: "dynamic-model", InputTokens: 1})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"free-model":{"input_cost_per_token":0,"output_cost_per_token":0},"dynamic-model":{"input_cost_per_token":-1,"output_cost_per_token":-1}}`))
+	}))
+	defer server.Close()
+
+	result, err := syncUpstreamPricesWithClient(store, server.Client(), server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Matched != 1 || result.Added != 1 {
+		t.Fatalf("sync result = %+v", result)
+	}
+	if rules := store.Rules(); len(rules) != 1 || rules[0].Match != "free-model" {
+		t.Fatalf("synced free-model rules = %+v", rules)
+	}
+}
+
 func TestSyncModelsDevPricesUsesPerMillionValues(t *testing.T) {
 	store, err := billing.NewStore(filepath.Join(t.TempDir(), "data"))
 	if err != nil {
@@ -402,6 +458,50 @@ func TestManagementSyncSelectsRequestedPricingSource(t *testing.T) {
 	}
 }
 
+func TestManagementPreviewSyncDoesNotWriteRules(t *testing.T) {
+	store, err := billing.NewStore(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.HandleUsage(billing.UsageRecord{Provider: "openai", Model: "gpt-4o", InputTokens: 10, OutputTokens: 5})
+	if err := store.SetRules([]billing.PriceRule{{Match: "openai/gpt-4o", InputPerMillion: 1, OutputPerMillion: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"gpt-4o":{"input_cost_per_token":0.0000025,"output_cost_per_token":0.00001}}`))
+	}))
+	defer server.Close()
+
+	previousSources := pricingSources
+	pricingSources = []pricingSource{{ID: "fixture", Name: "Fixture", URL: server.URL, Decode: decodeLiteLLMCatalog}}
+	t.Cleanup(func() { pricingSources = previousSources })
+	body, _ := json.Marshal(map[string]any{"rules": store.Rules()})
+	req, _ := json.Marshal(abi.ManagementRequest{
+		Method: http.MethodPost,
+		Path:   "/v0/management/cpa-billing-management/prices/sync",
+		Query:  map[string][]string{"source": {"fixture"}, "preview": {"1"}},
+		Body:   body,
+	})
+	raw, err := handleManagement(store, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := managementStatus(t, raw); got != http.StatusOK {
+		t.Fatalf("preview sync status = %d, want %d", got, http.StatusOK)
+	}
+	var result upstreamSyncResult
+	if err := json.Unmarshal(managementBody(t, raw), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Applied || result.Updated != 1 || len(result.Changes) != 1 {
+		t.Fatalf("preview sync result = %+v", result)
+	}
+	if got := store.Rules()[0].InputPerMillion; got != 1 {
+		t.Fatalf("management preview changed persisted input price to %v", got)
+	}
+}
+
 func TestPricingManagementListsAvailableSources(t *testing.T) {
 	store, err := billing.NewStore(filepath.Join(t.TempDir(), "data"))
 	if err != nil {
@@ -426,6 +526,28 @@ func TestPricingManagementListsAvailableSources(t *testing.T) {
 		if source.ID == "" || source.Name == "" {
 			t.Fatalf("invalid pricing source descriptor = %+v", source)
 		}
+	}
+}
+
+func TestPricingManagementListsObservedModelsWithZeroDefaults(t *testing.T) {
+	store, err := billing.NewStore(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.HandleUsage(billing.UsageRecord{Provider: "openai", Model: "gpt-unpriced", InputTokens: 1})
+	req, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodGet, Path: "/v0/management/cpa-billing-management/prices"})
+	raw, err := handleManagement(store, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Rules []billing.PriceRule `json:"rules"`
+	}
+	if err := json.Unmarshal(managementBody(t, raw), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Rules) != 1 || response.Rules[0].Match != "openai/gpt-unpriced" || response.Rules[0].InputPerMillion != 0 || response.Rules[0].OutputPerMillion != 0 {
+		t.Fatalf("observed unpriced model rules = %+v", response.Rules)
 	}
 }
 

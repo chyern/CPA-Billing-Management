@@ -10,7 +10,11 @@ import (
 	"github.com/chyern/CPA-Billing-Management/internal/billing"
 )
 
-const defaultPricingSourceID = "litellm"
+const (
+	defaultPricingSourceID   = "litellm"
+	maxPricingCatalogBytes   = 10 << 20
+	pricingRequestRetryCount = 3
+)
 
 type pricingSource struct {
 	ID     string
@@ -34,10 +38,20 @@ type upstreamSyncResult struct {
 	Source     string              `json:"source"`
 	SourceID   string              `json:"source_id"`
 	SourceName string              `json:"source_name"`
+	Applied    bool                `json:"applied"`
 	Matched    int                 `json:"matched"`
 	Added      int                 `json:"added"`
 	Updated    int                 `json:"updated"`
+	Unchanged  int                 `json:"unchanged"`
+	Changes    []pricingSyncChange `json:"changes"`
 	Rules      []billing.PriceRule `json:"rules"`
+}
+
+type pricingSyncChange struct {
+	Action   string             `json:"action"`
+	Match    string             `json:"match"`
+	Current  *billing.PriceRule `json:"current,omitempty"`
+	Upstream billing.PriceRule  `json:"upstream"`
 }
 
 func availablePricingSources() []pricingSourceDescriptor {
@@ -83,24 +97,46 @@ func syncUpstreamPricesWithClient(store *billing.Store, client *http.Client, sou
 }
 
 func syncUpstreamPricesFromSourceWithClient(store *billing.Store, client *http.Client, source pricingSource) (upstreamSyncResult, error) {
+	var rules []billing.PriceRule
+	if store != nil {
+		rules = store.Rules()
+	}
+	return reconcileUpstreamPricesFromSourceWithClient(store, client, source, rules, true)
+}
+
+func previewUpstreamPricesFromSourceWithClient(store *billing.Store, client *http.Client, source pricingSource, rules []billing.PriceRule) (upstreamSyncResult, error) {
+	return reconcileUpstreamPricesFromSourceWithClient(store, client, source, rules, false)
+}
+
+func reconcileUpstreamPricesFromSourceWithClient(store *billing.Store, client *http.Client, source pricingSource, rules []billing.PriceRule, apply bool) (upstreamSyncResult, error) {
 	result := upstreamSyncResult{Source: source.URL, SourceID: source.ID, SourceName: source.Name}
 	if store == nil {
 		return result, fmt.Errorf("billing store is unavailable")
 	}
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: 15 * time.Second}
 	}
 	if source.Decode == nil {
 		return result, fmt.Errorf("pricing source %q has no decoder", source.ID)
 	}
 
-	request, err := http.NewRequest(http.MethodGet, source.URL, nil)
-	if err != nil {
-		return result, fmt.Errorf("create %s price request: %w", source.Name, err)
+	var response *http.Response
+	var err error
+	for attempt := 0; attempt < pricingRequestRetryCount; attempt++ {
+		request, requestErr := http.NewRequest(http.MethodGet, source.URL, nil)
+		if requestErr != nil {
+			return result, fmt.Errorf("create %s price request: %w", source.Name, requestErr)
+		}
+		request.Header.Set("Accept", "application/json")
+		request.Header.Set("User-Agent", "cpa-billing-management/"+pluginVersion)
+		response, err = client.Do(request)
+		if err == nil {
+			break
+		}
+		if attempt+1 < pricingRequestRetryCount {
+			time.Sleep(time.Duration(200*(1<<attempt)) * time.Millisecond)
+		}
 	}
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("User-Agent", "cpa-billing-management/"+pluginVersion)
-	response, err := client.Do(request)
 	if err != nil {
 		return result, fmt.Errorf("download %s price catalog: %w", source.Name, err)
 	}
@@ -108,7 +144,7 @@ func syncUpstreamPricesFromSourceWithClient(store *billing.Store, client *http.C
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return result, fmt.Errorf("%s price catalog returned %s", source.Name, response.Status)
 	}
-	catalog, err := source.Decode(io.LimitReader(response.Body, 64<<20))
+	catalog, err := source.Decode(io.LimitReader(response.Body, maxPricingCatalogBytes))
 	if err != nil {
 		return result, fmt.Errorf("decode %s price catalog: %w", source.Name, err)
 	}
@@ -116,14 +152,14 @@ func syncUpstreamPricesFromSourceWithClient(store *billing.Store, client *http.C
 		return result, fmt.Errorf("%s price catalog is empty", source.Name)
 	}
 
-	rules := store.Rules()
+	rules = append([]billing.PriceRule(nil), rules...)
 	models := store.SummaryPage(1, 100).Models
 	for _, model := range models {
 		if model == nil {
 			continue
 		}
 		price, ok := catalog.lookup(model.Provider, model.Model)
-		if !ok || !hasNormalizedPrice(price) {
+		if !ok {
 			continue
 		}
 		result.Matched++
@@ -141,8 +177,12 @@ func syncUpstreamPricesFromSourceWithClient(store *billing.Store, client *http.C
 		index := findRule(rules, match)
 		if index >= 0 {
 			if rules[index] != updatedRule {
+				current := rules[index]
 				rules[index] = updatedRule
 				result.Updated++
+				result.Changes = append(result.Changes, pricingSyncChange{Action: "update", Match: match, Current: &current, Upstream: updatedRule})
+			} else {
+				result.Unchanged++
 			}
 			continue
 		}
@@ -157,13 +197,15 @@ func syncUpstreamPricesFromSourceWithClient(store *billing.Store, client *http.C
 		copy(rules[insertAt+1:], rules[insertAt:])
 		rules[insertAt] = updatedRule
 		result.Added++
+		result.Changes = append(result.Changes, pricingSyncChange{Action: "add", Match: match, Upstream: updatedRule})
 	}
-	if result.Added > 0 || result.Updated > 0 {
+	if apply && (result.Added > 0 || result.Updated > 0) {
 		if err := store.SetRules(rules); err != nil {
 			return result, err
 		}
 	}
-	result.Rules = store.Rules()
+	result.Applied = apply
+	result.Rules = rules
 	return result, nil
 }
 

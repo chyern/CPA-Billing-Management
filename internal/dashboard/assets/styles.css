@@ -84,6 +84,7 @@ select {
 .panel { margin-bottom: 20px; }
 .panel-heading { align-items: flex-start; justify-content: space-between; gap: 20px; }
 .sync-panel h2 { margin-bottom: 4px; }
+.catalog-panel { padding-bottom: 12px; }
 
 .sync-controls {
   align-items: flex-end;
@@ -166,6 +167,8 @@ td.num { font-variant-numeric: tabular-nums; }
 }
 
 .rules input.match { width: 190px; }
+.rule-match { display: flex; align-items: center; gap: 8px; }
+.sync-pill { border-color: #75522e; background: #4b321c; color: #e6c28a; }
 .rules th.num { text-align: left; }
 .rules td { padding-block: 8px; }
 .empty { padding: 26px; color: var(--text-secondary); text-align: center; }
