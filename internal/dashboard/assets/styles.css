@@ -151,41 +151,6 @@ h1 {
   text-transform: uppercase;
 }
 
-/* Page Navigation Tabs */
-.nav-tabs {
-  display: inline-flex;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  padding: 3px;
-  border-radius: 9999px;
-  gap: 3px;
-}
-
-.nav-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 14px;
-  border-radius: 9999px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  text-decoration: none;
-  transition: all 0.16s ease;
-}
-
-.nav-tab:hover {
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
-}
-
-.nav-tab.active {
-  color: #ffffff;
-  background: var(--primary-color);
-  font-weight: 600;
-  box-shadow: 0 2px 8px var(--primary-glow);
-}
-
 .muted {
   color: var(--text-secondary);
   font-size: 13px;
@@ -812,10 +777,6 @@ td.num {
     flex-direction: column;
     align-items: flex-start;
   }
-  .nav-tabs {
-    width: 100%;
-    justify-content: space-around;
-  }
   .toolbar {
     width: 100%;
     justify-content: space-between;
@@ -881,4 +842,3 @@ td.num {
     width: 100%;
   }
 }
-

@@ -318,6 +318,27 @@ func TestPreviewUpstreamPricesDoesNotPersistChanges(t *testing.T) {
 	}
 }
 
+func TestPreviewSyncIncludesModelsAlreadyInRules(t *testing.T) {
+	store, err := billing.NewStore(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := []billing.PriceRule{{Match: "codex/gpt-5.6-terra"}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"gpt-5.6-terra":{"input_cost_per_token":0.000002,"output_cost_per_token":0.00001}}`))
+	}))
+	defer server.Close()
+	source, _ := findPricingSource("litellm")
+	result, err := previewUpstreamPricesFromSourceWithClient(store, server.Client(), pricingSource{ID: source.ID, Name: source.Name, URL: server.URL, Decode: source.Decode}, rules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Matched != 1 || result.Updated != 1 || len(result.Changes) != 1 || result.Rules[0].Match != "codex/gpt-5.6-terra" {
+		t.Fatalf("preview rules-model result = %+v", result)
+	}
+}
+
 func TestSyncPreservesFreeModelsAndSkipsNegativeSentinels(t *testing.T) {
 	store, err := billing.NewStore(filepath.Join(t.TempDir(), "data"))
 	if err != nil {
@@ -370,6 +391,31 @@ func TestSyncModelsDevPricesUsesPerMillionValues(t *testing.T) {
 	rules := store.Rules()
 	if len(rules) != 1 || rules[0].Match != "openai/gpt-4o" || rules[0].InputPerMillion != 2.5 || rules[0].OutputPerMillion != 10 || rules[0].CacheReadPerMillion != 1 || rules[0].CacheCreationPerMillion != 1.5 {
 		t.Fatalf("models.dev rules = %+v", rules)
+	}
+}
+
+func TestModelsDevAliasChoosesCheapestNonZeroPrice(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"expensive":{"models":{"gpt-test":{"cost":{"input":10,"output":20}}}},
+			"free":{"models":{"gpt-test":{"cost":{"input":0,"output":0}}}},
+			"cheap":{"models":{"gpt-test":{"cost":{"input":2,"output":4}}}}
+		}`))
+	}))
+	defer server.Close()
+	store, err := billing.NewStore(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.HandleUsage(billing.UsageRecord{Provider: "codex", Model: "gpt-test", InputTokens: 1})
+	source := pricingSource{ID: "models.dev", Name: "Models.dev", URL: server.URL, Decode: decodeModelsDevCatalog}
+	result, err := syncUpstreamPricesFromSourceWithClient(store, server.Client(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Matched != 1 || len(store.Rules()) != 1 || store.Rules()[0].InputPerMillion != 2 {
+		t.Fatalf("models.dev alias result = %+v, rules=%+v", result, store.Rules())
 	}
 }
 

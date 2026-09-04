@@ -153,11 +153,8 @@ func reconcileUpstreamPricesFromSourceWithClient(store *billing.Store, client *h
 	}
 
 	rules = append([]billing.PriceRule(nil), rules...)
-	models := store.SummaryPage(1, 100).Models
+	models := syncModels(store, rules)
 	for _, model := range models {
-		if model == nil {
-			continue
-		}
 		price, ok := catalog.lookup(model.Provider, model.Model)
 		if !ok {
 			continue
@@ -207,6 +204,50 @@ func reconcileUpstreamPricesFromSourceWithClient(store *billing.Store, client *h
 	result.Applied = apply
 	result.Rules = rules
 	return result, nil
+}
+
+type syncModel struct {
+	Provider string
+	Model    string
+}
+
+// syncModels includes both observed usage models and models currently present
+// in the pricing editor. This lets preview sync populate prices for newly
+// exposed models before they have generated a usage event.
+func syncModels(store *billing.Store, rules []billing.PriceRule) []syncModel {
+	result := make([]syncModel, 0, len(rules)+8)
+	seen := make(map[string]struct{}, len(rules)+8)
+	add := func(provider, model string) {
+		provider, model = strings.TrimSpace(provider), strings.TrimSpace(model)
+		if model == "" {
+			return
+		}
+		key := strings.ToLower(provider + "/" + model)
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		result = append(result, syncModel{Provider: provider, Model: model})
+	}
+	if store != nil {
+		for _, model := range store.SummaryPage(1, 100).Models {
+			if model != nil {
+				add(model.Provider, model.Model)
+			}
+		}
+	}
+	for _, rule := range rules {
+		match := strings.TrimSpace(rule.Match)
+		if match == "" || match == "*" {
+			continue
+		}
+		provider, model := "", match
+		if index := strings.Index(match, "/"); index > 0 {
+			provider, model = match[:index], match[index+1:]
+		}
+		add(provider, model)
+	}
+	return result
 }
 
 func findRule(rules []billing.PriceRule, match string) int {

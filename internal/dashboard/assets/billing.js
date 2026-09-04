@@ -197,15 +197,6 @@ if (quickDates) {
   });
 }
 
-const navPricing = document.getElementById('navPricing');
-if (navPricing) {
-  if (window.location.pathname.startsWith('/v0/resource/plugins/')) {
-    navPricing.href = '/v0/resource/plugins/cpa-billing-management/pricing';
-  } else {
-    navPricing.href = '/pricing';
-  }
-}
-
 function configureAutoRefresh(seconds) {
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = null;
@@ -219,4 +210,3 @@ autoRefresh.onchange = event => configureAutoRefresh(Number(event.target.value))
 configureAutoRefresh(Number(autoRefresh.value));
 render();
 loadPage(Number(state.recent_events_page || 1));
-

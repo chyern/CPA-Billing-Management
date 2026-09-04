@@ -59,13 +59,16 @@ function renderRules() {
         return match === providerModel || match === String(model.model || '').trim().toLowerCase();
       });
       const readonly = catalogRule ? ' readonly title="模型名称来自 CLIProxyAPI 模型列表"' : '';
+      const removeButton = catalogRule
+        ? '<button class="btn danger" disabled title="CLIProxyAPI 内置模型不能删除">删除</button>'
+        : '<button class="btn danger" data-action="remove" data-index="' + index + '">删除</button>';
       const trCls = change ? ' class="rule-row-changed"' : '';
       return '<tr data-i="' + index + '"' + trCls + '>' + '<td><div class="rule-match"><input class="match" data-k="match" placeholder="例如：openai/gpt-4o" value="' + (rule._draft ? '' : escapeHTML(rule.match)) + '"' + readonly + '>' + badge + '</div></td>'
       + '<td><input data-k="input_per_million" type="number" min="0" step="0.000001" placeholder="例如：2.5" value="' + valueFor(rule, 'input_per_million') + '"></td>'
       + '<td><input data-k="output_per_million" type="number" min="0" step="0.000001" placeholder="例如：10" value="' + valueFor(rule, 'output_per_million') + '"></td>'
       + '<td><input data-k="cache_read_per_million" type="number" min="0" step="0.000001" placeholder="例如：0.25" value="' + valueFor(rule, 'cache_read_per_million') + '"></td>'
       + '<td><input data-k="cache_creation_per_million" type="number" min="0" step="0.000001" placeholder="例如：0.25" value="' + valueFor(rule, 'cache_creation_per_million') + '"></td>'
-      + '<td><button class="btn danger" data-action="remove" data-index="' + index + '">删除</button></td>'
+      + '<td>' + removeButton + '</td>'
     + '</tr>';
     })(),
   ).join('');
@@ -357,15 +360,6 @@ document.getElementById('add').onclick = () => {
 const ruleSearchInput = document.getElementById('ruleSearch');
 if (ruleSearchInput) {
   ruleSearchInput.addEventListener('input', filterRules);
-}
-
-const navBilling = document.getElementById('navBilling');
-if (navBilling) {
-  if (window.location.pathname.startsWith('/v0/resource/plugins/')) {
-    navBilling.href = '/v0/resource/plugins/cpa-billing-management/billing';
-  } else {
-    navBilling.href = '/';
-  }
 }
 
 document.getElementById('save').onclick = async () => {

@@ -17,9 +17,8 @@ type normalizedModelPrice struct {
 }
 
 type normalizedPriceCatalog struct {
-	exact            map[string]normalizedModelPrice
-	aliases          map[string]normalizedModelPrice
-	ambiguousAliases map[string]struct{}
+	exact   map[string]normalizedModelPrice
+	aliases map[string]normalizedModelPrice
 }
 
 type flexiblePrice float64
@@ -159,7 +158,7 @@ func decodeOpenRouterCatalog(reader io.Reader) (*normalizedPriceCatalog, error) 
 }
 
 func newNormalizedPriceCatalog() *normalizedPriceCatalog {
-	return &normalizedPriceCatalog{exact: make(map[string]normalizedModelPrice), aliases: make(map[string]normalizedModelPrice), ambiguousAliases: make(map[string]struct{})}
+	return &normalizedPriceCatalog{exact: make(map[string]normalizedModelPrice), aliases: make(map[string]normalizedModelPrice)}
 }
 func (catalog *normalizedPriceCatalog) addExact(key string, price normalizedModelPrice) {
 	if key = normalizeCatalogKey(key); key != "" {
@@ -171,15 +170,36 @@ func (catalog *normalizedPriceCatalog) addAlias(key string, price normalizedMode
 	if key == "" {
 		return
 	}
-	if _, ambiguous := catalog.ambiguousAliases[key]; ambiguous {
-		return
-	}
-	if existing, exists := catalog.aliases[key]; exists && existing != price {
-		delete(catalog.aliases, key)
-		catalog.ambiguousAliases[key] = struct{}{}
+	if existing, exists := catalog.aliases[key]; exists {
+		// A model name can be published by many providers. Keep a usable
+		// alias by selecting the cheapest non-zero input price, matching the
+		// conflict policy used by New API's models.dev synchronizer. Previously
+		// any price difference marked the alias ambiguous, causing almost every
+		// popular model to be skipped during sync.
+		if preferNormalizedPrice(price, existing) {
+			catalog.aliases[key] = price
+		}
 		return
 	}
 	catalog.aliases[key] = price
+}
+
+func preferNormalizedPrice(next, current normalizedModelPrice) bool {
+	nextNonZero := next.InputPerMillion > 0
+	currentNonZero := current.InputPerMillion > 0
+	if nextNonZero != currentNonZero {
+		return nextNonZero
+	}
+	if nextNonZero && next.InputPerMillion != current.InputPerMillion {
+		return next.InputPerMillion < current.InputPerMillion
+	}
+	if next.OutputPerMillion != current.OutputPerMillion {
+		return next.OutputPerMillion < current.OutputPerMillion
+	}
+	if next.CacheReadPerMillion != current.CacheReadPerMillion {
+		return next.CacheReadPerMillion < current.CacheReadPerMillion
+	}
+	return next.CacheCreationPerMillion < current.CacheCreationPerMillion
 }
 func (catalog *normalizedPriceCatalog) lookup(provider, model string) (normalizedModelPrice, bool) {
 	model, provider = normalizeCatalogKey(model), normalizeCatalogKey(provider)
