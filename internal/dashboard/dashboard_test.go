@@ -56,7 +56,7 @@ func TestRenderContainsKeyBalanceDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, expected := range []string{"CPA 密钥余额", "API Key 余额", "备注", "填写密钥用途", "当前余额", "累计费用", "保存余额", "key-balances", "crypto.subtle", "完整密钥不会写入账单数据库"} {
+	for _, expected := range []string{"CPA 密钥余额", "API Key 余额", "仅显示 CLIProxyAPI 当前配置的 API Key", "保持配置顺序", "备注", "填写密钥用途", "当前余额", "累计费用", "保存余额", "key-balances", "crypto.subtle", "完整密钥不会写入账单数据库"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("rendered key-balance dashboard does not contain %q", expected)
 		}

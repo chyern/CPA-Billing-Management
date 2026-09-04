@@ -93,35 +93,31 @@ function renderBalances() {
 }
 
 async function configuredKeys() {
-  try {
-    const config = await requestJSON('/v0/management/config');
-    const raw = Array.isArray(config && (config.apiKeys || config['api-keys'])) ? (config.apiKeys || config['api-keys']) : [];
-    const keys = raw.map(item => typeof item === 'string' ? item : String(item && (item.key || item.api_key || item.value) || '')).map(key => key.trim()).filter(Boolean);
-    return Promise.all(keys.map(async key => ({
-      api_key_id: await keyIdentifier(key),
-      caller_scope: await callerScope(key),
-      api_key: maskKey(key),
-    })));
-  } catch (_) {
-    return [];
-  }
+  const config = await requestJSON('/v0/management/config');
+  const raw = Array.isArray(config && (config.apiKeys || config['api-keys'])) ? (config.apiKeys || config['api-keys']) : [];
+  const keys = raw.map(item => typeof item === 'string' ? item : String(item && (item.key || item.api_key || item.value) || '')).map(key => key.trim()).filter(Boolean);
+  return Promise.all(keys.map(async key => ({
+    api_key_id: await keyIdentifier(key),
+    caller_scope: await callerScope(key),
+    api_key: maskKey(key),
+  })));
 }
 
 async function loadBalances() {
   const [data, hostKeys] = await Promise.all([requestJSON(BALANCES_API), configuredKeys()]);
   currency = data.currency || 'USD';
   document.getElementById('currency').textContent = currency;
-  const byID = new Map((data.balances || []).map(item => [String(item.api_key_id || ''), item]));
-  hostKeys.forEach(key => {
-    const current = byID.get(key.api_key_id);
-    if (current) {
-      if (!current.caller_scope) current.caller_scope = key.caller_scope;
-      if (!current.api_key) current.api_key = key.api_key;
-      return;
-    }
-    byID.set(key.api_key_id, Object.assign({balance: 0, configured: false, requests: 0, cost: 0}, key));
-  });
-  balances = [...byID.values()];
+  const savedByID = new Map((data.balances || []).map(item => [String(item.api_key_id || ''), item]));
+  const seen = new Set();
+  balances = hostKeys.filter(key => {
+    if (seen.has(key.api_key_id)) return false;
+    seen.add(key.api_key_id);
+    return true;
+  }).map(key => Object.assign(
+    {balance: 0, configured: false, requests: 0, cost: 0, note: ''},
+    savedByID.get(key.api_key_id) || {},
+    key,
+  ));
   renderBalances();
   showStatus('已更新');
 }
