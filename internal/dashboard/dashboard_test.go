@@ -121,3 +121,19 @@ func TestPricingRuleHeadersAlignWithInputs(t *testing.T) {
 		t.Fatal("pricing rule numeric headers must align to the leading edge of their inputs")
 	}
 }
+
+func TestLocaleScriptReadsPersistedLanguageAndAvoidsObserverLoop(t *testing.T) {
+	text := string(localeScript)
+	for _, expected := range []string{
+		"JSON.parse(candidate)",
+		"window.parent !== window",
+		"URLSearchParams(window.location.search)",
+		"if (next !== node.nodeValue) node.nodeValue = next",
+		"if (next !== current) element.setAttribute(attribute, next)",
+		"document.querySelector('title')",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("locale script is missing %q", expected)
+		}
+	}
+}

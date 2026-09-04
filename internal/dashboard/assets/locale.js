@@ -3,6 +3,7 @@
   const translations = {
     en: {
       'CPA 费用统计': 'CPA Billing Statistics', 'CPA 模型费用': 'CPA Model Pricing', 'CPA 密钥余额': 'CPA Key Balances',
+      '模型': 'Model',
       '自动刷新': 'Auto refresh', '不刷新': 'Off', '今天': 'Today', '近 7 天': 'Last 7 days', '近 30 天': 'Last 30 days', '5 秒': '5 sec', '10 秒': '10 sec', '15 秒': '15 sec', '不足 1 ms': '<1 ms', '首字': 'TTFT',
       '开始日期': 'Start date', '结束日期': 'End date', '查询': 'Query', '总费用': 'Total cost', '请求数': 'Requests',
       '总 token': 'Total tokens', '失败请求': 'Failed requests', ['按' + '模型' + '汇总']: 'By model', '按 API Key 汇总': 'By API Key',
@@ -38,6 +39,7 @@
     },
     'zh-TW': {
       'CPA 费用统计': 'CPA 費用統計', 'CPA 模型费用': 'CPA 模型費用', 'CPA 密钥余额': 'CPA 金鑰餘額', '自动刷新': '自動重新整理', '不刷新': '不重新整理',
+      '模型': '模型',
       '今天': '今天', '昨天': '昨天', '近 7 天': '近 7 天', '近 30 天': '近 30 天', '开始日期': '開始日期', '结束日期': '結束日期', '查询': '查詢', '重置': '重設',
       '总费用': '總費用', '请求数': '請求數', '总 token': '總 token', '失败请求': '失敗請求', ['按' + '模型' + '汇总']: '按模型彙總', '按 API Key 汇总': '按 API Key 彙總',
       ['最近' + '事件']: '最近' + '事件', '输入': '輸入', '缓存': '快取', '输出': '輸出', '费用': '費用', '时间': '時間', '状态': '狀態', '成功': '成功', '失败': '失敗',
@@ -50,6 +52,7 @@
     },
     ru: {
       'CPA 费用统计': 'Статистика расходов CPA', 'CPA 模型费用': 'Цены моделей CPA', 'CPA 密钥余额': 'Баланс ключей CPA', '自动刷新': 'Автообновление', '不刷新': 'Выкл.',
+      '模型': 'Модель',
       '今天': 'Сегодня', '昨天': 'Вчера', '近 7 天': 'Последние 7 дней', '近 30 天': 'Последние 30 дней', '开始日期': 'Дата начала', '结束日期': 'Дата окончания', '查询': 'Запросить', '重置': 'Сбросить',
       '总费用': 'Общие расходы', '请求数': 'Запросы', '总 token': 'Всего токенов', '失败请求': 'Ошибочные запросы', ['按' + '模型' + '汇总']: 'По моделям', '按 API Key 汇总': 'По API Key', ['最近' + '事件']: 'Последние события',
       '输入': 'Ввод', '缓存': 'Кэш', '输出': 'Вывод', '费用': 'Стоимость', '时间': 'Время', '状态': 'Статус', '成功': 'Успешно', '失败': 'Ошибка', '未配置模型费用': 'Цена модели не задана',
@@ -60,31 +63,115 @@
       '已更新': 'Обновлено', '暂无 usage 事件': 'Нет usage-событий', '暂无 API Key 数据': 'Нет данных API Key', ['暂无' + '最近' + '事件']: 'Нет последних событий',
     },
   };
-  const getLanguage = () => {
-    let value = '';
+
+  // The dashboard pages also render status messages and table empty states
+  // dynamically. Keep these strings in the same dictionary so newly rendered
+  // content follows the selected language as well.
+  const extraTranslations = {
+    en: {
+      '产生模型调用事件后将自动在此汇总': 'Model usage events will be summarized here automatically',
+      '仅显示 CLIProxyAPI 当前配置的 API Key。配置客户端密钥或产生 usage 事件后会显示在这里。': 'Only API Keys configured in CLIProxyAPI are shown. Configure a client key or generate a usage event to show it here.',
+      '按模型名称或通配快速过滤...': 'Filter by model name or wildcard...', '复制完整 API Key': 'Copy full API Key', '未命名密钥': 'Unnamed key', '未提供': 'Not provided',
+      'LiteLLM 公共目录': 'LiteLLM catalog', 'Models.dev 公共目录': 'Models.dev catalog', 'OpenRouter 模型 API': 'OpenRouter Models API',
+      '与 CLIProxyAPI 首页“模型”卡片相同，列出当前代理端点暴露的模型；未配置价格的模型按 0 展示。': 'Shows the models exposed by the current CLIProxyAPI endpoint; models without a configured price are shown as 0.',
+      '匹配优先级：模型名 → alias → *。价格单位为当前币种 / 1M token，费用在事件生成时计算，后续修改价格不会影响历史事件。': 'Match priority: model name → alias → *. Prices are per 1M tokens in the current currency; costs are fixed when events are created.',
+      '费用计算说明': 'Cost calculation details', '上游明确返回金额时优先使用，否则按“模型费用”中的每百万 token 价格估算': 'Use the upstream amount when provided; otherwise estimate using the per-million-token price in “Model pricing”.',
+      '当前币种：': 'Currency: ', '估算费用仅供参考': 'Estimated costs are for reference only', '未设置余额的密钥不拦截': 'Keys without a balance set are not blocked',
+      '当前余额合计': 'Total balance', '余额必须是大于等于 0 的有效数字': 'Balance must be a valid number greater than or equal to 0', '管理中心登录已失效': 'Management session expired',
+      '无法读取完整 API Key，未执行删除': 'Unable to read the full API Key; deletion was not performed', '请输入完整 API Key': 'Enter a complete API Key', '该 API Key 已存在': 'This API Key already exists',
+      '同步失败：': 'Sync failed: ', '请求失败': 'Request failed', '请求 ': 'Requests ', '失败 ': 'Failed ', '输入 ': 'Input ', '缓存 ': 'Cache ', '输出 ': 'Output ', '费用 ': 'Cost ',
+      '缓存读取 / 1M': 'Cache read / 1M', '缓存创建 / 1M': 'Cache creation / 1M', '匹配': 'Match', ['暂无' + '价格' + '规则']: 'No pricing rules', '待新增': 'Pending add', '待更新': 'Pending update',
+      '模型名称来自 CLIProxyAPI 模型列表': 'Model name comes from the CLIProxyAPI model list', 'CLIProxyAPI 内置模型不能删除': 'Built-in CLIProxyAPI models cannot be deleted', '暂无可用模型': 'No models available', '未配置，按 0 计': 'Not configured; counted as 0',
+      '第 ': 'Page ', ' 条规则的匹配不能为空': ' match cannot be empty', ' 条规则与其他规则重复：': ' duplicates another rule: ', ' 条规则的价格必须是大于等于 0 的有效数字': ' price must be a valid number greater than or equal to 0',
+      ' 条模型费用已保存': ' model pricing saved', '这条模型费用规则': 'this model pricing rule', '正在从 ': 'Loading prices from ', '获取价格…': 'Get prices…',
+      '最近处理的 API 请求事件会实时出现在这里': 'Recently processed API request events appear here in real time', '确定要删除“': 'Delete “', '”吗？删除会立即生效。': '”? This takes effect immediately.',
+      '确定要删除 ': 'Delete ', ' 吗？\n\n这会从 CLIProxyAPI 主配置中永久移除该 API Key，同时清除插件中的余额和备注。': ' ?\n\nThis permanently removes the API Key from the CLIProxyAPI configuration and clears its plugin balance and note.',
+      ['按' + '模型' + '汇总' + ' ']: 'By model ', '按 API Key 汇总 ': 'By API Key ', ['最近' + '事件' + ' ']: 'Recent events ', '费用统计 ': 'Billing statistics ', '密钥余额 ': 'Key balances ', '模型费用 ': 'Model pricing ', '正常': 'Normal',
+    },
+    'zh-TW': {
+      '产生模型调用事件后将自动在此汇总': '模型呼叫事件會自動在此彙總',
+      '仅显示 CLIProxyAPI 当前配置的 API Key。配置客户端密钥或产生 usage 事件后会显示在这里。': '僅顯示 CLIProxyAPI 目前設定的 API Key。設定用戶端金鑰或產生 usage 事件後會顯示在這裡。',
+      '按模型名称或通配快速过滤...': '按模型名稱或萬用字元快速篩選...', '复制完整 API Key': '複製完整 API Key', '未命名密钥': '未命名金鑰', '未提供': '未提供',
+      'LiteLLM 公共目录': 'LiteLLM 公共目錄', 'Models.dev 公共目录': 'Models.dev 公共目錄', 'OpenRouter 模型 API': 'OpenRouter 模型 API',
+      '与 CLIProxyAPI 首页“模型”卡片相同，列出当前代理端点暴露的模型；未配置价格的模型按 0 展示。': '與 CLIProxyAPI 首頁「模型」卡片相同，列出目前代理端點公開的模型；未設定價格的模型按 0 顯示。',
+      '匹配优先级：模型名 → alias → *。价格单位为当前币种 / 1M token，费用在事件生成时计算，后续修改价格不会影响历史事件。': '比對優先順序：模型名稱 → alias → *。價格單位為目前幣別 / 1M token，費用在事件產生時計算，後續修改價格不會影響歷史事件。',
+      '费用计算说明': '費用計算說明', '上游明确返回金额时优先使用，否则按“模型费用”中的每百万 token 价格估算': '上游明確回傳金額時優先使用，否則按「模型費用」中的每百萬 token 價格估算。',
+      '当前币种：': '目前幣別：', '估算费用仅供参考': '估算費用僅供參考', '未设置余额的密钥不拦截': '未設定餘額的金鑰不攔截',
+      '当前余额合计': '目前餘額合計', '余额必须是大于等于 0 的有效数字': '餘額必須是大於等於 0 的有效數字', '管理中心登录已失效': '管理中心登入已失效',
+      '无法读取完整 API Key，未执行删除': '無法讀取完整 API Key，未執行刪除', '请输入完整 API Key': '請輸入完整 API Key', '该 API Key 已存在': '此 API Key 已存在',
+      '同步失败：': '同步失敗：', '请求失败': '請求失敗', '请求 ': '請求 ', '失败 ': '失敗 ', '输入 ': '輸入 ', '缓存 ': '快取 ', '输出 ': '輸出 ', '费用 ': '費用 ',
+      '缓存读取 / 1M': '快取讀取 / 1M', '缓存创建 / 1M': '快取建立 / 1M', '匹配': '比對', ['暂无' + '价格' + '规则']: '暫無價格規則', '待新增': '待新增', '待更新': '待更新',
+      '模型名称来自 CLIProxyAPI 模型列表': '模型名稱來自 CLIProxyAPI 模型清單', 'CLIProxyAPI 内置模型不能删除': '無法刪除 CLIProxyAPI 內建模型', '暂无可用模型': '暫無可用模型', '未配置，按 0 计': '未設定，按 0 計',
+      '第 ': '第 ', ' 条规则的匹配不能为空': ' 條規則的比對不可為空', ' 条规则与其他规则重复：': ' 條規則與其他規則重複：', ' 条规则的价格必须是大于等于 0 的有效数字': ' 條規則的價格必須是大於等於 0 的有效數字',
+      ' 条模型费用已保存': ' 條模型費用已儲存', '这条模型费用规则': '這條模型費用規則', '正在从 ': '正在從 ', '获取价格…': '取得價格…',
+      '最近处理的 API 请求事件会实时出现在这里': '最近處理的 API 請求事件會即時出現在這裡', '确定要删除“': '確定要刪除「', '”吗？删除会立即生效。': '」嗎？刪除會立即生效。',
+      '确定要删除 ': '確定要刪除 ', ' 吗？\n\n这会从 CLIProxyAPI 主配置中永久移除该 API Key，同时清除插件中的余额和备注。': ' 嗎？\n\n這會從 CLIProxyAPI 主設定中永久移除該 API Key，同時清除外掛中的餘額和備註。',
+      ['按' + '模型' + '汇总' + ' ']: '按模型彙總 ', '按 API Key 汇总 ': '按 API Key 彙總 ', ['最近' + '事件' + ' ']: ['最近' + '事件' + ' '], '费用统计 ': '費用統計 ', '密钥余额 ': '金鑰餘額 ', '模型费用 ': '模型費用 ', '正常': '正常',
+    },
+    ru: {
+      '产生模型调用事件后将自动在此汇总': 'События использования моделей будут собираться здесь автоматически',
+      '仅显示 CLIProxyAPI 当前配置的 API Key。配置客户端密钥或产生 usage 事件后会显示在这里。': 'Здесь отображаются только ключи API, настроенные в CLIProxyAPI. Настройте ключ или создайте событие использования.',
+      '按模型名称或通配快速过滤...': 'Фильтр по имени модели или шаблону...', '复制完整 API Key': 'Копировать полный API Key', '未命名密钥': 'Ключ без имени', '未提供': 'Не указан',
+      'LiteLLM 公共目录': 'Каталог LiteLLM', 'Models.dev 公共目录': 'Каталог Models.dev', 'OpenRouter 模型 API': 'API моделей OpenRouter',
+      '与 CLIProxyAPI 首页“模型”卡片相同，列出当前代理端点暴露的模型；未配置价格的模型按 0 展示。': 'Показывает модели, доступные через текущую конечную точку CLIProxyAPI; модели без заданной цены отображаются как 0.',
+      '匹配优先级：模型名 → alias → *。价格单位为当前币种 / 1M token，费用在事件生成时计算，后续修改价格不会影响历史事件。': 'Приоритет сопоставления: имя модели → alias → *. Цены указаны за 1M токенов в текущей валюте; стоимость фиксируется при создании события.',
+      '费用计算说明': 'Расчёт стоимости', '上游明确返回金额时优先使用，否则按“模型费用”中的每百万 token 价格估算': 'Используется сумма от провайдера; иначе стоимость оценивается по цене за миллион токенов из «Цен моделей».',
+      '当前币种：': 'Валюта: ', '估算费用仅供参考': 'Оценка стоимости приведена только для справки', '未设置余额的密钥不拦截': 'Ключи без заданного баланса не блокируются',
+      '当前余额合计': 'Общий текущий баланс', '余额必须是大于等于 0 的有效数字': 'Баланс должен быть допустимым числом не меньше 0', '管理中心登录已失效': 'Сеанс управления истёк',
+      '无法读取完整 API Key，未执行删除': 'Не удалось прочитать полный API Key; удаление не выполнено', '请输入完整 API Key': 'Введите полный API Key', '该 API Key 已存在': 'Этот API Key уже существует',
+      '同步失败：': 'Ошибка синхронизации: ', '请求失败': 'Ошибка запроса', '请求 ': 'Запросы ', '失败 ': 'Ошибки ', '输入 ': 'Ввод ', '缓存 ': 'Кэш ', '输出 ': 'Вывод ', '费用 ': 'Стоимость ',
+      '缓存读取 / 1M': 'Чтение кэша / 1M', '缓存创建 / 1M': 'Создание кэша / 1M', '匹配': 'Сопоставление', ['暂无' + '价格' + '规则']: 'Нет правил цен', '待新增': 'Добавление', '待更新': 'Обновление',
+      '模型名称来自 CLIProxyAPI 模型列表': 'Имя модели взято из списка моделей CLIProxyAPI', 'CLIProxyAPI 内置模型不能删除': 'Встроенные модели CLIProxyAPI нельзя удалить', '暂无可用模型': 'Нет доступных моделей', '未配置，按 0 计': 'Не задано; считается как 0',
+      '第 ': 'Страница ', ' 条规则的匹配不能为空': ': поле сопоставления не может быть пустым', ' 条规则与其他规则重复：': ' дублирует другое правило: ', ' 条规则的价格必须是大于等于 0 的有效数字': ': цена должна быть допустимым числом не меньше 0',
+      ' 条模型费用已保存': ': цены модели сохранены', '这条模型费用规则': 'это правило цены модели', '正在从 ': 'Загрузка цен из ', '获取价格…': 'Получить цены…',
+      '最近处理的 API 请求事件会实时出现在这里': 'Недавние события API-запросов появляются здесь в реальном времени', '确定要删除“': 'Удалить «', '”吗？删除会立即生效。': '»? Изменение вступит в силу немедленно.',
+      '确定要删除 ': 'Удалить ', ' 吗？\n\n这会从 CLIProxyAPI 主配置中永久移除该 API Key，同时清除插件中的余额和备注。': '?\n\nКлюч будет навсегда удалён из конфигурации CLIProxyAPI, а баланс и примечание плагина очищены.',
+      ['按' + '模型' + '汇总' + ' ']: 'По моделям ', '按 API Key 汇总 ': 'По API Key ', ['最近' + '事件' + ' ']: 'Последние события ', '费用统计 ': 'Статистика расходов ', '密钥余额 ': 'Баланс ключей ', '模型费用 ': 'Цены моделей ', '正常': 'Норма',
+    },
+  };
+  Object.keys(extraTranslations).forEach((language) => Object.assign(translations[language], extraTranslations[language]));
+
+  const normalizeLanguage = value => {
+    if (value === null || value === undefined) return '';
+    let candidate = String(value).trim();
+    if (!candidate) return '';
+    // Zustand persist stores { state: { language: 'en' } } in localStorage.
     try {
-      // The management center keeps its language in an obfuscated storage
-      // wrapper, but exposes the resolved locale on the parent HTML element.
-      value = window.parent && window.parent.document.documentElement.lang || '';
-      if (!value) value = window.parent && window.parent.document.documentElement.dataset.language || '';
-      // Some management-center builds keep the html lang attribute at its
-      // initial value. Detect the translated navigation labels as a fallback.
-      if (!value || value === 'zh-CN') {
-        const parentText = String(window.parent && window.parent.document.body && window.parent.document.body.innerText || '');
-        if (/\bOPERATE\b|\bGATEWAY\b|\bPLUGINS\b/.test(parentText)) value = 'en';
-        else if (/ОПЕРАЦИИ|ШЛЮЗ|ПЛАГИНЫ/.test(parentText)) value = 'ru';
-        else if (/執行|閘道|外掛/.test(parentText)) value = 'zh-TW';
-      }
+      const parsed = JSON.parse(candidate);
+      candidate = parsed && (parsed.state && parsed.state.language || parsed.language || parsed.locale) || candidate;
     } catch (_) {}
-    try { if (!value) value = window.parent && window.parent.localStorage.getItem(languageKey) || ''; } catch (_) {}
-    if (!value) {
-      try { value = localStorage.getItem(languageKey) || ''; } catch (_) {}
+    candidate = String(candidate || '').replace('_', '-').toLowerCase();
+    if (candidate === 'zh-tw' || candidate === 'zh-hk' || candidate === 'zh-mo' || candidate === 'zh-hant') return 'zh-TW';
+    if (candidate === 'zh' || candidate.startsWith('zh-cn') || candidate.startsWith('zh-hans')) return 'zh-CN';
+    if (candidate === 'en' || candidate.startsWith('en-')) return 'en';
+    if (candidate === 'ru' || candidate.startsWith('ru-')) return 'ru';
+    return '';
+  };
+  const readStorageLanguage = storage => {
+    try {
+      return normalizeLanguage(storage && storage.getItem(languageKey));
+    } catch (_) {
+      return '';
     }
-    value = String(value || navigator.language || 'zh-CN');
-    if (/^zh[-_]tw/i.test(value)) return 'zh-TW';
-    if (/^en/i.test(value)) return 'en';
-    if (/^ru/i.test(value)) return 'ru';
-    return 'zh-CN';
+  };
+  const getLanguage = () => {
+    const embedded = window.parent && window.parent !== window;
+    let value = '';
+    // Storage is the source of truth. The parent html lang can remain at its
+    // initial zh-CN value for a short time while the React shell hydrates.
+    if (embedded) {
+      try { value = readStorageLanguage(window.parent.localStorage); } catch (_) {}
+    }
+    if (!value) {
+      try { value = readStorageLanguage(window.localStorage); } catch (_) {}
+    }
+    if (!value && embedded) {
+      try { value = normalizeLanguage(window.parent.document.documentElement.dataset.language); } catch (_) {}
+      try { if (!value) value = normalizeLanguage(window.parent.document.documentElement.lang); } catch (_) {}
+    }
+    if (!value) value = normalizeLanguage(new URLSearchParams(window.location.search).get('lang'));
+    if (!value) value = normalizeLanguage(navigator.languages && navigator.languages[0] || navigator.language);
+    return value || 'zh-CN';
   };
   const locale = getLanguage();
   const dictionary = translations[locale] || {};
@@ -95,13 +182,29 @@
     if (translating || locale === 'zh-CN') return;
     translating = true;
     const replace = value => Object.keys(dictionary).sort((a, b) => b.length - a.length).reduce((text, key) => text.split(key).join(dictionary[key]), value);
+    const title = document.querySelector('title');
+    if (title) {
+      const nextTitle = replace(title.textContent || '');
+      if (nextTitle !== title.textContent) title.textContent = nextTitle;
+    }
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     const nodes = [];
     while (walker.nextNode()) nodes.push(walker.currentNode);
-    nodes.forEach(node => { if (node.nodeValue.trim()) node.nodeValue = replace(node.nodeValue); });
+    nodes.forEach(node => {
+      if (!node.nodeValue.trim()) return;
+      const next = replace(node.nodeValue);
+      // Avoid writing an unchanged value: characterData observers fire even
+      // when nodeValue is assigned the same string, which otherwise creates a
+      // tight MutationObserver loop on translated pages.
+      if (next !== node.nodeValue) node.nodeValue = next;
+    });
     document.querySelectorAll('[placeholder],[title],[aria-label]').forEach(element => {
       ['placeholder', 'title', 'aria-label'].forEach(attribute => {
-        if (element.hasAttribute(attribute)) element.setAttribute(attribute, replace(element.getAttribute(attribute)));
+        if (element.hasAttribute(attribute)) {
+          const current = element.getAttribute(attribute);
+          const next = replace(current);
+          if (next !== current) element.setAttribute(attribute, next);
+        }
       });
     });
     translating = false;
@@ -109,5 +212,18 @@
   const observer = new MutationObserver(translate);
   const start = () => { translate(); observer.observe(document.body, {childList: true, subtree: true, characterData: true}); };
   if (document.body) start(); else document.addEventListener('DOMContentLoaded', start, {once: true});
-  setInterval(() => { if (getLanguage() !== locale) window.location.reload(); }, 1000);
+  const reloadIfLanguageChanged = () => {
+    if (getLanguage() !== locale) window.location.reload();
+  };
+  // React updates the parent html lang after changing language. Reacting to
+  // that mutation (and to storage events) removes the old one-second window
+  // where the embedded page could display the previous locale.
+  window.addEventListener('storage', reloadIfLanguageChanged);
+  try {
+    if (window.parent && window.parent !== window) {
+      const parentRoot = window.parent.document.documentElement;
+      new MutationObserver(reloadIfLanguageChanged).observe(parentRoot, {attributes: true, attributeFilter: ['lang', 'data-language']});
+    }
+  } catch (_) {}
+  setInterval(reloadIfLanguageChanged, 1500);
 })();

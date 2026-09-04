@@ -1,4 +1,5 @@
 const BALANCES_API = '/v0/management/cpa-billing-management/key-balances';
+const t = value => typeof window.cpaTranslate === 'function' ? window.cpaTranslate(value) : value;
 let balances = [];
 let currency = 'USD';
 
@@ -286,7 +287,7 @@ async function saveBalances() {
 
 async function deleteAPIKey(item) {
   const label = item && item.api_key || '该 API Key';
-  if (!window.confirm('确定要删除 ' + label + ' 吗？\n\n这会从 CLIProxyAPI 主配置中永久移除该 API Key，同时清除插件中的余额和备注。')) {
+  if (!window.confirm(t('确定要删除 ') + label + t(' 吗？\n\n这会从 CLIProxyAPI 主配置中永久移除该 API Key，同时清除插件中的余额和备注。'))) {
     return;
   }
   try {

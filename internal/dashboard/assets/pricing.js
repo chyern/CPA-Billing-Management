@@ -1,4 +1,5 @@
 const PRICING_API = '/v0/management/cpa-billing-management/prices';
+const t = value => typeof window.cpaTranslate === 'function' ? window.cpaTranslate(value) : value;
 const SYNC_API = PRICING_API + '/sync';
 const SYNC_SOURCE_STORAGE_KEY = 'cpa-billing-pricing-source';
 const priceFields = [
@@ -334,7 +335,7 @@ document.getElementById('rules').addEventListener('click', async event => {
     return;
   }
   const label = rules[index] && rules[index].match || '这条模型费用规则';
-  if (!window.confirm('确定要删除“' + label + '”吗？删除会立即生效。')) return;
+  if (!window.confirm(t('确定要删除“') + label + t('”吗？删除会立即生效。'))) return;
   const removed = rules.splice(index, 1)[0];
   try {
     await saveRules(rules);
