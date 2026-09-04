@@ -32,6 +32,7 @@ const escapeHTML = value => String(value ?? '').replace(
 );
 const formatNumber = value => Number(value || 0).toLocaleString('zh-CN');
 const formatMoney = value => escapeHTML(state.currency || 'USD') + ' ' + Number(value || 0).toFixed(6);
+const costHelp = '<span class="cost-help"><button type="button" class="cost-help-button" data-action="cost-help" aria-label="费用计算说明" aria-expanded="false">?</button><span class="cost-help-tooltip" role="tooltip" hidden>上游明确返回金额时优先使用，否则按“模型费用”中的每百万 token 价格估算</span></span>';
 
 function formatDuration(nanoseconds) {
   const milliseconds = Number(nanoseconds || 0) / 1e6;
@@ -83,8 +84,8 @@ function renderCards() {
 function renderModels() {
   const models = state.models || [];
   document.getElementById('models').innerHTML = models.length
-    ? '<table><thead><tr><th>Provider</th><th>Model</th><th class="num">请求</th><th class="num">输入</th><th class="num">缓存</th><th class="num">输出</th><th class="num">总 token</th><th class="num">费用</th></tr></thead><tbody>'
-      + models.map(model => '<tr><td><span class="provider-badge">' + escapeHTML(model.provider) + '</span></td><td>' + escapeHTML(model.model) + ' ' + (model.priced ? '' : '<span class="pill">未配置模型费用</span>') + '</td><td class="num">' + formatNumber(model.requests) + '</td><td class="num">' + formatNumber(model.input_tokens) + '</td><td class="num">' + formatNumber(model.cached_tokens) + '</td><td class="num">' + formatNumber(model.output_tokens) + '</td><td class="num">' + formatNumber(model.total_tokens) + '</td><td class="num">' + formatMoney(model.cost) + '</td></tr>').join('')
+    ? '<table><thead><tr><th>Provider</th><th>Model</th><th class="num">请求</th><th class="num">输入</th><th class="num">缓存</th><th class="num">输出</th><th class="num">总 token</th><th class="num">费用 ' + costHelp + '</th></tr></thead><tbody>'
+      + models.map(model => '<tr><td><span class="provider-badge">' + escapeHTML(model.provider) + '</span></td><td>' + escapeHTML(model.model) + '</td><td class="num">' + formatNumber(model.requests) + '</td><td class="num">' + formatNumber(model.input_tokens) + '</td><td class="num">' + formatNumber(model.cached_tokens) + '</td><td class="num">' + formatNumber(model.output_tokens) + '</td><td class="num">' + formatNumber(model.total_tokens) + '</td><td class="num">' + formatMoney(model.cost) + '</td></tr>').join('')
       + '</tbody></table>'
     : '<div class="empty">暂无 usage 事件</div>';
 }
@@ -92,7 +93,7 @@ function renderModels() {
 function renderAPIKeys() {
   const apiKeys = state.api_keys || [];
   document.getElementById('apiKeys').innerHTML = apiKeys.length
-    ? '<table><thead><tr><th>API Key</th><th class="num">请求</th><th class="num">失败</th><th class="num">输入</th><th class="num">缓存</th><th class="num">输出</th><th class="num">总 token</th><th class="num">费用</th></tr></thead><tbody>'
+    ? '<table><thead><tr><th>API Key</th><th class="num">请求</th><th class="num">失败</th><th class="num">输入</th><th class="num">缓存</th><th class="num">输出</th><th class="num">总 token</th><th class="num">费用 ' + costHelp + '</th></tr></thead><tbody>'
       + apiKeys.map(key => '<tr><td><span class="code-tag">' + escapeHTML(key.api_key || '未提供') + '</span></td><td class="num">' + formatNumber(key.requests) + '</td><td class="num">' + formatNumber(key.failed_requests) + '</td><td class="num">' + formatNumber(key.input_tokens) + '</td><td class="num">' + formatNumber(key.cached_tokens) + '</td><td class="num">' + formatNumber(key.output_tokens) + '</td><td class="num">' + formatNumber(key.total_tokens) + '</td><td class="num">' + formatMoney(key.cost) + '</td></tr>').join('')
       + '</tbody></table>'
     : '<div class="empty">暂无 API Key 数据</div>';
@@ -101,10 +102,10 @@ function renderAPIKeys() {
 function renderEvents() {
   const events = state.recent_events || [];
   const eventTable = events.length
-    ? '<table><thead><tr><th>时间</th><th>模型</th><th>API Key</th><th class="num">耗时/首字</th><th class="num">输入/缓存</th><th class="num">输出</th><th class="num">费用</th><th>状态</th></tr></thead><tbody>'
+      ? '<table><thead><tr><th>时间</th><th>模型</th><th>API Key</th><th class="num">耗时/首字</th><th class="num">输入/缓存</th><th class="num">输出</th><th class="num">费用 ' + costHelp + '</th><th>状态</th></tr></thead><tbody>'
       + events.slice().reverse().map(event => '<tr>'
         + '<td>' + escapeHTML(new Date(event.requested_at).toLocaleString()) + '</td>'
-        + '<td>' + escapeHTML(event.model || '-') + '</td>'
+        + '<td>' + escapeHTML(event.model || '-') + ((!event.priced_by || event.priced_by === '*') ? ' <span class="pill">未配置模型费用</span>' : '') + '</td>'
         + '<td><span class="code-tag">' + escapeHTML(event.api_key || '-') + '</span></td>'
         + '<td class="num"><div class="dual-metric"><span class="dual-metric-primary">' + formatDuration(event.latency_ns) + '</span><span class="dual-metric-secondary">首字 ' + formatDuration(event.ttft_ns) + '</span></div></td>'
         + '<td class="num"><div class="dual-metric"><span class="dual-metric-primary">' + formatNumber(event.input_tokens) + '</span><span class="dual-metric-secondary">缓存 ' + formatNumber(event.cached_tokens) + '</span></div></td>'
@@ -129,6 +130,32 @@ function render() {
   renderAPIKeys();
   renderEvents();
 }
+
+function closeCostHelp() {
+  document.querySelectorAll('[data-action="cost-help"]').forEach(button => {
+    button.setAttribute('aria-expanded', 'false');
+    const tooltip = button.parentElement.querySelector('.cost-help-tooltip');
+    if (tooltip) tooltip.hidden = true;
+  });
+}
+
+document.addEventListener('click', event => {
+  const button = event.target.closest('[data-action="cost-help"]');
+  if (!button) return;
+  event.stopPropagation();
+  const tooltip = button.parentElement.querySelector('.cost-help-tooltip');
+  if (!tooltip) return;
+  const expanded = button.getAttribute('aria-expanded') === 'true';
+  closeCostHelp();
+  if (!expanded) {
+    button.setAttribute('aria-expanded', 'true');
+    tooltip.hidden = false;
+  }
+});
+
+document.addEventListener('click', event => {
+  if (!event.target.closest('.cost-help')) closeCostHelp();
+});
 
 function showStatus(message, error = false) {
   const element = document.getElementById('status');

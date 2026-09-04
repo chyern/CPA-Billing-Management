@@ -150,18 +150,6 @@ func TestPluginBillingFlow(t *testing.T) {
 	if got := managementStatus(t, refreshRaw); got != http.StatusUnauthorized {
 		t.Fatalf("billing resource JSON status = %d, want %d", got, http.StatusUnauthorized)
 	}
-	fallbackReq, _ := json.Marshal(abi.ManagementRequest{
-		Method: http.MethodGet,
-		Path:   resourcePath,
-		Query:  map[string][]string{"format": {"fallback-json"}, "page": {"2"}, "page_size": {"1"}},
-	})
-	fallbackRaw, err := handleMethod(abi.MethodManagementHandle, fallbackReq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := managementStatus(t, fallbackRaw); got != http.StatusUnauthorized {
-		t.Fatalf("billing resource fallback status = %d, want %d", got, http.StatusUnauthorized)
-	}
 	managementRefreshReq, _ := json.Marshal(abi.ManagementRequest{
 		Method: http.MethodGet,
 		Path:   "/v0/management/cpa-billing-management/summary",
@@ -203,14 +191,6 @@ func TestPluginBillingFlow(t *testing.T) {
 	}
 	if got := managementStatus(t, pricingJSONRaw); got != http.StatusUnauthorized {
 		t.Fatalf("pricing resource JSON status = %d, want %d", got, http.StatusUnauthorized)
-	}
-	pricingFallbackReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodGet, Path: pricingPath, Query: map[string][]string{"format": {"fallback-json"}}})
-	pricingFallbackRaw, err := handleMethod(abi.MethodManagementHandle, pricingFallbackReq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := managementStatus(t, pricingFallbackRaw); got != http.StatusUnauthorized {
-		t.Fatalf("pricing resource fallback status = %d, want %d", got, http.StatusUnauthorized)
 	}
 
 	localPricesBody, _ := json.Marshal(map[string]any{"rules": []billing.PriceRule{{Match: "test-model", InputPerMillion: 3, OutputPerMillion: 6}}})
@@ -309,18 +289,23 @@ func TestSyncUpstreamPricesAddsMatchedModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.HandleUsage(billing.UsageRecord{Provider: "openai", Model: "gpt-4o", InputTokens: 10, OutputTokens: 5, TotalTokens: 15})
+	if err := store.SetRules([]billing.PriceRule{{Match: "openai/gpt-4o"}}); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"gpt-4o":{"input_cost_per_token":0.0000025,"output_cost_per_token":0.00001,"cache_read_input_token_cost":0.000001}}`))
 	}))
 	defer server.Close()
 
-	result, err := syncUpstreamPricesWithClient(store, server.Client(), server.URL)
+	source, _ := findPricingSource("litellm")
+	source.URL = server.URL
+	result, err := syncUpstreamPricesFromSourceWithClient(store, server.Client(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Matched != 1 || result.Added != 1 {
-		t.Fatalf("sync result = %+v, want one matched and added model", result)
+	if result.Matched != 1 || result.Updated != 1 {
+		t.Fatalf("sync result = %+v, want one matched and updated model", result)
 	}
 	rules := store.Rules()
 	if len(rules) != 1 || rules[0].Match != "openai/gpt-4o" || rules[0].InputPerMillion != 2.5 || rules[0].CacheReadPerMillion != 1 {
@@ -334,6 +319,9 @@ func TestPreviewUpstreamPricesDoesNotPersistChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.HandleUsage(billing.UsageRecord{Provider: "openai", Model: "gpt-4o", InputTokens: 10, OutputTokens: 5})
+	if err := store.SetRules([]billing.PriceRule{{Match: "openai/gpt-4o"}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.SetRules([]billing.PriceRule{{Match: "openai/gpt-4o", InputPerMillion: 1, OutputPerMillion: 2}}); err != nil {
 		t.Fatal(err)
 	}
@@ -387,17 +375,22 @@ func TestSyncPreservesFreeModelsAndSkipsNegativeSentinels(t *testing.T) {
 	}
 	store.HandleUsage(billing.UsageRecord{Model: "free-model", InputTokens: 1})
 	store.HandleUsage(billing.UsageRecord{Model: "dynamic-model", InputTokens: 1})
+	if err := store.SetRules([]billing.PriceRule{{Match: "free-model"}}); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"free-model":{"input_cost_per_token":0,"output_cost_per_token":0},"dynamic-model":{"input_cost_per_token":-1,"output_cost_per_token":-1}}`))
 	}))
 	defer server.Close()
 
-	result, err := syncUpstreamPricesWithClient(store, server.Client(), server.URL)
+	source, _ := findPricingSource("litellm")
+	source.URL = server.URL
+	result, err := syncUpstreamPricesFromSourceWithClient(store, server.Client(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Matched != 1 || result.Added != 1 {
+	if result.Matched != 1 || result.Unchanged != 1 {
 		t.Fatalf("sync result = %+v", result)
 	}
 	if rules := store.Rules(); len(rules) != 1 || rules[0].Match != "free-model" {
@@ -411,6 +404,9 @@ func TestSyncModelsDevPricesUsesPerMillionValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.HandleUsage(billing.UsageRecord{Provider: "openai", Model: "gpt-4o", InputTokens: 10, OutputTokens: 5})
+	if err := store.SetRules([]billing.PriceRule{{Match: "openai/gpt-4o"}}); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"openai":{"id":"openai","models":{"gpt-4o":{"id":"gpt-4o","cost":{"input":2.5,"output":10,"cache_read":1,"cache_write":1.5}}}}}`))
@@ -426,7 +422,7 @@ func TestSyncModelsDevPricesUsesPerMillionValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SourceID != "models.dev" || result.Matched != 1 || result.Added != 1 {
+	if result.SourceID != "models.dev" || result.Matched != 1 || result.Updated != 1 {
 		t.Fatalf("sync result = %+v", result)
 	}
 	rules := store.Rules()
@@ -450,6 +446,9 @@ func TestModelsDevAliasChoosesCheapestNonZeroPrice(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.HandleUsage(billing.UsageRecord{Provider: "codex", Model: "gpt-test", InputTokens: 1})
+	if err := store.SetRules([]billing.PriceRule{{Match: "codex/gpt-test"}}); err != nil {
+		t.Fatal(err)
+	}
 	source := pricingSource{ID: "models.dev", Name: "Models.dev", URL: server.URL, Decode: decodeModelsDevCatalog}
 	result, err := syncUpstreamPricesFromSourceWithClient(store, server.Client(), source)
 	if err != nil {
@@ -475,6 +474,9 @@ func TestModelsDevCodexAliasPrefersOfficialOpenAIPrice(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.HandleUsage(billing.UsageRecord{Provider: "codex", Model: "gpt-5.6-sol", InputTokens: 1})
+	if err := store.SetRules([]billing.PriceRule{{Match: "codex/gpt-5.6-sol"}}); err != nil {
+		t.Fatal(err)
+	}
 	source := pricingSource{ID: "models.dev", Name: "Models.dev", URL: server.URL, Decode: decodeModelsDevCatalog}
 	result, err := syncUpstreamPricesFromSourceWithClient(store, server.Client(), source)
 	if err != nil {
@@ -496,6 +498,9 @@ func TestSyncOpenRouterPricesConvertsPerTokenValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.HandleUsage(billing.UsageRecord{Provider: "openai", Model: "gpt-4o", InputTokens: 10, OutputTokens: 5})
+	if err := store.SetRules([]billing.PriceRule{{Match: "openai/gpt-4o"}}); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":[{"id":"openai/gpt-4o","pricing":{"prompt":"0.0000025","completion":"0.00001","input_cache_read":"0.000001","input_cache_write":"0.0000015"}}]}`))
@@ -511,7 +516,7 @@ func TestSyncOpenRouterPricesConvertsPerTokenValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SourceID != "openrouter" || result.Matched != 1 || result.Added != 1 {
+	if result.SourceID != "openrouter" || result.Matched != 1 || result.Updated != 1 {
 		t.Fatalf("sync result = %+v", result)
 	}
 	rules := store.Rules()
@@ -545,6 +550,9 @@ func TestManagementSyncSelectsRequestedPricingSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.HandleUsage(billing.UsageRecord{Provider: "openai", Model: "gpt-4o", InputTokens: 10, OutputTokens: 5})
+	if err := store.SetRules([]billing.PriceRule{{Match: "openai/gpt-4o"}}); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"gpt-4o":{"input_cost_per_token":0.000003,"output_cost_per_token":0.000012}}`))
@@ -554,10 +562,12 @@ func TestManagementSyncSelectsRequestedPricingSource(t *testing.T) {
 	previousSources := pricingSources
 	pricingSources = []pricingSource{{ID: "fixture", Name: "Fixture", URL: server.URL, Decode: decodeLiteLLMCatalog}}
 	t.Cleanup(func() { pricingSources = previousSources })
+	body, _ := json.Marshal(map[string]any{"rules": store.Rules()})
 	req, _ := json.Marshal(abi.ManagementRequest{
 		Method: http.MethodPost,
 		Path:   "/v0/management/cpa-billing-management/prices/sync",
-		Query:  map[string][]string{"source": {"fixture"}},
+		Query:  map[string][]string{"source": {"fixture"}, "preview": {"1"}},
+		Body:   body,
 	})
 	raw, err := handleManagement(store, req)
 	if err != nil {
@@ -646,7 +656,7 @@ func TestPricingManagementListsAvailableSources(t *testing.T) {
 	}
 }
 
-func TestPricingManagementListsObservedModelsWithZeroDefaults(t *testing.T) {
+func TestPricingManagementDoesNotListUsageModels(t *testing.T) {
 	store, err := billing.NewStore(filepath.Join(t.TempDir(), "data"))
 	if err != nil {
 		t.Fatal(err)
@@ -658,13 +668,14 @@ func TestPricingManagementListsObservedModelsWithZeroDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	var response struct {
-		Rules []billing.PriceRule `json:"rules"`
+		Rules  []billing.PriceRule   `json:"rules"`
+		Models []pricingCatalogModel `json:"models"`
 	}
 	if err := json.Unmarshal(managementBody(t, raw), &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Rules) != 1 || response.Rules[0].Match != "openai/gpt-unpriced" || response.Rules[0].InputPerMillion != 0 || response.Rules[0].OutputPerMillion != 0 {
-		t.Fatalf("observed unpriced model rules = %+v", response.Rules)
+	if len(response.Rules) != 0 || len(response.Models) != 0 {
+		t.Fatalf("usage model leaked into pricing snapshot = rules=%+v models=%+v", response.Rules, response.Models)
 	}
 }
 

@@ -9,6 +9,9 @@ var (
 	//go:embed assets/auth.js
 	managementAuthScript []byte
 
+	//go:embed assets/locale.js
+	localeScript []byte
+
 	//go:embed assets/billing.html
 	billingTemplate []byte
 

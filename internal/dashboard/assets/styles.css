@@ -265,20 +265,6 @@ select:focus {
   border: 1px solid var(--border-color);
 }
 
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent-emerald);
-  box-shadow: 0 0 8px var(--accent-emerald);
-  flex-shrink: 0;
-}
-
-.status-dot.error {
-  background: var(--accent-rose);
-  box-shadow: 0 0 8px var(--accent-rose);
-}
-
 .status {
   min-height: 18px;
   font-size: 12px;
@@ -550,7 +536,6 @@ table {
 }
 
 thead {
-  /* Fallback test anchor */
   background: var(--muted-bg);
 }
 
@@ -590,6 +575,54 @@ td.num, th.num {
 
 td.num {
   font-variant-numeric: tabular-nums;
+}
+
+.cost-help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.cost-help-button {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--text-tertiary);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 14px;
+  cursor: pointer;
+}
+
+.cost-help-button:hover,
+.cost-help-button[aria-expanded="true"] {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.cost-help-tooltip {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 5;
+  width: 260px;
+  padding: 9px 11px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+  box-shadow: var(--card-shadow);
 }
 
 /* Code-like formatting for API Key */
@@ -753,6 +786,12 @@ td.num {
   opacity: 0.75;
   background: var(--bg-tertiary);
   cursor: not-allowed;
+}
+
+.row-actions {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
 }
 
 /* Key Balance Page Table */

@@ -88,14 +88,6 @@ func syncUpstreamPricesFromSource(store *billing.Store, sourceID string) (upstre
 	return syncUpstreamPricesFromSourceWithClient(store, client, source)
 }
 
-// syncUpstreamPricesWithClient keeps the original LiteLLM test and preview
-// integration usable while the management API selects among multiple sources.
-func syncUpstreamPricesWithClient(store *billing.Store, client *http.Client, sourceURL string) (upstreamSyncResult, error) {
-	source, _ := findPricingSource(defaultPricingSourceID)
-	source.URL = sourceURL
-	return syncUpstreamPricesFromSourceWithClient(store, client, source)
-}
-
 func syncUpstreamPricesFromSourceWithClient(store *billing.Store, client *http.Client, source pricingSource) (upstreamSyncResult, error) {
 	var rules []billing.PriceRule
 	if store != nil {
@@ -153,26 +145,26 @@ func reconcileUpstreamPricesFromSourceWithClient(store *billing.Store, client *h
 	}
 
 	rules = append([]billing.PriceRule(nil), rules...)
-	models := syncModels(store, rules)
+	models := syncModels(rules)
 	for _, model := range models {
-		price, ok := catalog.lookup(model.Provider, model.Model)
+		price, ok := catalog.lookup(model.Model)
 		if !ok {
 			continue
 		}
 		result.Matched++
-		match := strings.TrimSpace(model.Model)
-		if provider := strings.TrimSpace(model.Provider); provider != "" {
-			match = provider + "/" + match
-		}
 		updatedRule := billing.PriceRule{
-			Match:                   match,
+			Match:                   model.Model,
 			InputPerMillion:         price.InputPerMillion,
 			OutputPerMillion:        price.OutputPerMillion,
 			CacheReadPerMillion:     price.CacheReadPerMillion,
 			CacheCreationPerMillion: price.CacheCreationPerMillion,
 		}
-		index := findRule(rules, match)
+		index := findRuleByModel(rules, model.Model)
 		if index >= 0 {
+			// Preserve an existing rule's spelling while updating its price. This
+			// avoids rewriting user data; matching itself is model-name based.
+			match := strings.TrimSpace(rules[index].Match)
+			updatedRule.Match = match
 			if rules[index] != updatedRule {
 				current := rules[index]
 				rules[index] = updatedRule
@@ -194,7 +186,7 @@ func reconcileUpstreamPricesFromSourceWithClient(store *billing.Store, client *h
 		copy(rules[insertAt+1:], rules[insertAt:])
 		rules[insertAt] = updatedRule
 		result.Added++
-		result.Changes = append(result.Changes, pricingSyncChange{Action: "add", Match: match, Upstream: updatedRule})
+		result.Changes = append(result.Changes, pricingSyncChange{Action: "add", Match: model.Model, Upstream: updatedRule})
 	}
 	if apply && (result.Added > 0 || result.Updated > 0) {
 		if err := store.SetRules(rules); err != nil {
@@ -207,52 +199,53 @@ func reconcileUpstreamPricesFromSourceWithClient(store *billing.Store, client *h
 }
 
 type syncModel struct {
-	Provider string
-	Model    string
+	Model string
 }
 
-// syncModels includes both observed usage models and models currently present
-// in the pricing editor. This lets preview sync populate prices for newly
-// exposed models before they have generated a usage event.
-func syncModels(store *billing.Store, rules []billing.PriceRule) []syncModel {
-	result := make([]syncModel, 0, len(rules)+8)
-	seen := make(map[string]struct{}, len(rules)+8)
-	add := func(provider, model string) {
-		provider, model = strings.TrimSpace(provider), strings.TrimSpace(model)
+// syncModels includes only models currently present in the pricing editor.
+// Usage events are intentionally independent from pricing-rule maintenance.
+func syncModels(rules []billing.PriceRule) []syncModel {
+	result := make([]syncModel, 0, len(rules))
+	seen := make(map[string]struct{}, len(rules))
+	add := func(model string) {
+		model = strings.TrimSpace(model)
 		if model == "" {
 			return
 		}
-		key := strings.ToLower(provider + "/" + model)
+		key := strings.ToLower(model)
 		if _, exists := seen[key]; exists {
 			return
 		}
 		seen[key] = struct{}{}
-		result = append(result, syncModel{Provider: provider, Model: model})
-	}
-	if store != nil {
-		for _, model := range store.SummaryPage(1, 100).Models {
-			if model != nil {
-				add(model.Provider, model.Model)
-			}
-		}
+		result = append(result, syncModel{Model: model})
 	}
 	for _, rule := range rules {
 		match := strings.TrimSpace(rule.Match)
 		if match == "" || match == "*" {
 			continue
 		}
-		provider, model := "", match
-		if index := strings.Index(match, "/"); index > 0 {
-			provider, model = match[:index], match[index+1:]
+		if index := strings.LastIndex(match, "/"); index >= 0 {
+			match = strings.TrimSpace(match[index+1:])
 		}
-		add(provider, model)
+		add(match)
 	}
 	return result
 }
 
-func findRule(rules []billing.PriceRule, match string) int {
+func findRuleByModel(rules []billing.PriceRule, model string) int {
+	model = strings.TrimSpace(model)
 	for i, rule := range rules {
-		if strings.EqualFold(strings.TrimSpace(rule.Match), strings.TrimSpace(match)) {
+		match := strings.TrimSpace(rule.Match)
+		if match == "" || match == "*" {
+			continue
+		}
+		if strings.EqualFold(match, model) {
+			return i
+		}
+		if index := strings.LastIndex(match, "/"); index >= 0 {
+			match = strings.TrimSpace(match[index+1:])
+		}
+		if strings.EqualFold(match, model) {
 			return i
 		}
 	}

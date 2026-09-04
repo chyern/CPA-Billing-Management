@@ -12,13 +12,9 @@
       <div class="header-top">
         <h1>CPA 模型费用 <span class="title-badge">Pricing</span></h1>
       </div>
-      <div class="muted">CLIProxyAPI 模型目录中的全部模型都会列出；未配置价格的模型先显示为 0。上游明确返回金额时不会被这里的规则覆盖</div>
     </div>
     <div class="toolbar">
-      <div class="status-wrap">
-        <span id="statusDot" class="status-dot"></span>
-        <span id="status" class="muted status"></span>
-      </div>
+      <span id="status" class="muted status"></span>
     </div>
   </header>
 
@@ -27,7 +23,6 @@
       <div class="panel-heading">
         <div>
           <h2>同步上游价格</h2>
-          <p class="muted">先获取本地与上游的价格差异，确认后点击“保存模型费用”应用。</p>
         </div>
         <span class="pill neutral">可选渠道</span>
       </div>
@@ -58,7 +53,7 @@
       <div class="rules-panel-header">
         <div>
           <h2>模型价格规则</h2>
-          <p class="muted">匹配优先级：provider/model → model → alias → *。价格单位为当前币种 / 1M token，费用在事件生成时计算，后续修改价格不会影响历史事件。</p>
+          <p class="muted">匹配优先级：模型名 → alias → *。价格单位为当前币种 / 1M token，费用在事件生成时计算，后续修改价格不会影响历史事件。</p>
         </div>
         <div class="actions">
           <div class="rules-search-wrap">

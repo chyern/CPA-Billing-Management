@@ -107,8 +107,8 @@ function renderBalances() {
 
 async function configuredKeys() {
   const config = await requestJSON('/v0/management/api-keys');
-  const raw = Array.isArray(config && (config['api-keys'] || config.apiKeys)) ? (config['api-keys'] || config.apiKeys) : [];
-  const keys = raw.map(item => typeof item === 'string' ? item : String(item && (item.key || item.api_key || item.value) || '')).map(key => key.trim()).filter(Boolean);
+  const raw = Array.isArray(config && config['api-keys']) ? config['api-keys'] : [];
+  const keys = raw.map(key => String(key).trim()).filter(Boolean);
   return Promise.all(keys.map(async key => ({
     api_key_id: await keyIdentifier(key),
     caller_scope: await callerScope(key),
@@ -119,7 +119,7 @@ async function configuredKeys() {
 
 async function configuredAPIKeys() {
   const config = await requestJSON('/v0/management/api-keys');
-  return Array.isArray(config && (config['api-keys'] || config.apiKeys)) ? (config['api-keys'] || config.apiKeys).map(item => String(item || '').trim()).filter(Boolean) : [];
+  return Array.isArray(config && config['api-keys']) ? config['api-keys'].map(key => String(key).trim()).filter(Boolean) : [];
 }
 
 async function persistPluginState(items = balances) {

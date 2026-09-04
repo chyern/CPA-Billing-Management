@@ -195,8 +195,8 @@ func (catalog *normalizedPriceCatalog) addAliasWithPriority(key string, price no
 	}
 	if existing, exists := catalog.aliases[key]; exists {
 		currentPriority := catalog.aliasesPriority[key]
-		// Official model-owner entries always win. Price comparison is only a
-		// deterministic fallback between entries at the same trust level.
+		// Official model-owner entries always win. Price comparison only breaks
+		// ties between entries at the same trust level.
 		if priority < currentPriority || (priority == currentPriority && !preferNormalizedPrice(price, existing)) {
 			return
 		}
@@ -232,20 +232,8 @@ func preferNormalizedPrice(next, current normalizedModelPrice) bool {
 	}
 	return next.CacheCreationPerMillion < current.CacheCreationPerMillion
 }
-func (catalog *normalizedPriceCatalog) lookup(provider, model string) (normalizedModelPrice, bool) {
-	model, provider = normalizeCatalogKey(model), normalizeCatalogKey(provider)
-	if model != "" {
-		for _, candidate := range catalogProviderCandidates(provider) {
-			if price, ok := catalog.exact[candidate+"/"+model]; ok {
-				return price, true
-			}
-		}
-		if provider != "" {
-			if price, ok := catalog.exact[provider+"/"+model]; ok {
-				return price, true
-			}
-		}
-	}
+func (catalog *normalizedPriceCatalog) lookup(model string) (normalizedModelPrice, bool) {
+	model = normalizeCatalogKey(model)
 	if price, ok := catalog.exact[model]; ok {
 		return price, true
 	}
@@ -258,22 +246,6 @@ func (catalog *normalizedPriceCatalog) lookup(provider, model string) (normalize
 	return normalizedModelPrice{}, false
 }
 
-func catalogProviderCandidates(provider string) []string {
-	provider = normalizeCatalogKey(provider)
-	switch provider {
-	case "codex":
-		return []string{"openai"}
-	case "claude":
-		return []string{"anthropic"}
-	case "gemini", "vertex", "aistudio", "antigravity":
-		return []string{"google"}
-	default:
-		if provider != "" {
-			return []string{provider}
-		}
-		return nil
-	}
-}
 func (catalog *normalizedPriceCatalog) empty() bool {
 	return len(catalog.exact) == 0 && len(catalog.aliases) == 0
 }

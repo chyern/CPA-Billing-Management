@@ -22,10 +22,23 @@ func CalculateCost(record UsageRecord, rule PriceRule) float64 {
 }
 
 func (s *Store) matchRule(record UsageRecord) (PriceRule, bool) {
-	keys := []string{strings.TrimSpace(record.Provider) + "/" + strings.TrimSpace(record.Model), record.Model, record.Alias, "*"}
+	// 价格规则只按模型名匹配，provider 仅用于统计维度，不参与计费。
+	// 规则表中如果仍有 provider/model 形式，取最后一个斜杠后的模型名，
+	// 这样不会因为上游 provider 与 CLIProxyAPI 的 owned_by 不一致而漏计费。
+	model := strings.TrimSpace(record.Model)
+	keys := []string{model, strings.TrimSpace(record.Alias), "*"}
 	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
 		for _, rule := range s.state.Rules {
-			if strings.EqualFold(strings.TrimSpace(rule.Match), strings.TrimSpace(key)) {
+			ruleMatch := strings.TrimSpace(rule.Match)
+			matches := strings.EqualFold(ruleMatch, key)
+			if !matches && key != "*" && strings.Contains(ruleMatch, "/") {
+				matches = strings.EqualFold(modelNameFromRuleMatch(ruleMatch), key)
+			}
+			if matches {
 				priced := key != "*" || rule.InputPerMillion > 0 || rule.OutputPerMillion > 0 || rule.CacheReadPerMillion > 0 || rule.CacheCreationPerMillion > 0
 				return rule, priced
 			}
@@ -34,19 +47,26 @@ func (s *Store) matchRule(record UsageRecord) (PriceRule, bool) {
 	return PriceRule{Match: "*"}, false
 }
 
+func modelNameFromRuleMatch(match string) string {
+	match = strings.TrimSpace(match)
+	if index := strings.LastIndex(match, "/"); index >= 0 {
+		return strings.TrimSpace(match[index+1:])
+	}
+	return match
+}
+
 func (s *Store) Rules() []PriceRule {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return append([]PriceRule(nil), s.state.Rules...)
 }
 
-// ResolvePriceRule returns the effective rule for a provider/model pair.
-// It lets management views distinguish an alias or wildcard rule from a
-// model that has no price configuration at all.
-func (s *Store) ResolvePriceRule(provider, model string) (PriceRule, bool) {
+// ResolvePriceRule returns the effective rule for a model name. The provider
+// argument is retained for callers that already pass a provider, but ignored.
+func (s *Store) ResolvePriceRule(_ string, model string) (PriceRule, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.matchRule(UsageRecord{Provider: provider, Model: model})
+	return s.matchRule(UsageRecord{Model: model})
 }
 
 func (s *Store) SetRules(rules []PriceRule) error {

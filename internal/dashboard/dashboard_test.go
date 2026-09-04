@@ -38,7 +38,7 @@ func TestRenderContainsSeparateModelCostDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, expected := range []string{"CPA 模型费用", "模型价格规则", "同步上游价格", "价格来源", "LiteLLM 公共目录", "Models.dev 公共目录", "OpenRouter 模型 API", "cpa-billing-pricing-source", "source=", "新增规则", "保存模型费用", "输入 / 1M", "输出 / 1M", "v0/management/cpa-billing-management/prices", "/sync", "placeholder=\"例如：openai/gpt-4o\"", "Number.isFinite", "CLIProxyAPI 内置模型不能删除", "cli-proxy-auth", "enc::v1::", "Authorization:'Bearer '+MANAGEMENT_KEY", "/management.html#/login", "sync-panel", "sync-controls", "rules-panel", "--muted-bg: #262320", "background: var(--muted-bg)", "font-size: 12px", "font-weight: 500", "USD"} {
+	for _, expected := range []string{"CPA 模型费用", "模型价格规则", "同步上游价格", "价格来源", "LiteLLM 公共目录", "Models.dev 公共目录", "OpenRouter 模型 API", "cpa-billing-pricing-source", "source=", "新增规则", "保存模型费用", "输入 / 1M", "输出 / 1M", "v0/management/cpa-billing-management/prices", "/sync", "placeholder=\"例如：gpt-4o\"", "Number.isFinite", "CLIProxyAPI 内置模型不能删除", "owned_by", "row-actions", "save-row", "window.confirm", "cli-proxy-auth", "enc::v1::", "Authorization:'Bearer '+MANAGEMENT_KEY", "/management.html#/login", "sync-panel", "sync-controls", "rules-panel", "--muted-bg: #262320", "background: var(--muted-bg)", "font-size: 12px", "font-weight: 500", "USD"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("rendered model-cost dashboard does not contain %q", expected)
 		}

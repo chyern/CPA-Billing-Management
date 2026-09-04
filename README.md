@@ -8,10 +8,10 @@ CLIProxyAPI 自定义插件：接收 usage 事件，优先使用上游金额，�
 - 上游回调明确包含费用字段时直接使用该金额；
 - 上游未返回金额时，按输入、输出、缓存读取和缓存创建 token 以及模型价格规则估算费用；
 - 费用在 usage 事件写入时计算并固化，后续修改模型价格只影响新事件，不会联动修改历史费用；
-- 支持 `provider/model`、模型名、alias 和 `*` 通配价格规则；
+- 支持模型名、alias 和 `*` 通配价格规则；
 - 使用结构化 SQLite 表持久化设置、价格规则、usage 事件、按模型汇总和按 API Key 汇总；数据库文件为数据目录下的 `billing.db`，默认目录是操作系统用户配置目录下的 `cliproxyapi/cpa-billing-management`；
 - 在 CLIProxyAPI 管理页增加“费用统计”菜单，展示总费用、按模型汇总、按脱敏 API Key 汇总，以及最近请求的总耗时和首 Token 耗时；最近事件支持分页和可选的 5/10/15 秒自动刷新；
-- 在独立的“模型费用”页面编辑价格规则；费用页会优先列出 CLIProxyAPI 首页“模型”卡片对应的 `/v1/models` 当前暴露模型，没有匹配价格规则的模型默认显示为 0，并标记为“未配置模型费用”。无法访问该接口时回退到 CLIProxyAPI 模型目录。同步价格时先获取本地与上游的差异，确认后再保存，避免一次拉取直接覆盖人工调整。
+- 在独立的“模型费用”页面编辑价格规则；费用页只列出 CLIProxyAPI `/v1/models` 当前暴露的模型，没有匹配价格规则的模型默认显示为 0，并标记为“未配置模型费用”。同步价格时先获取本地与上游的差异，确认后再保存，避免一次拉取直接覆盖人工调整。
 - 模型费用页默认不添加价格规则；支持按需从 [LiteLLM 公共模型价格目录](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)、[Models.dev](https://models.dev/) 或 [OpenRouter Models API](https://openrouter.ai/docs/api-reference/list-available-models) 同步当前已使用且可识别的模型，未识别的模型仍可手动配置。
 - 提供独立的“密钥余额”页面，可为客户端 API Key 设置当前余额；后续 usage 事件产生费用时自动扣减，并展示累计请求、累计费用和余额状态。已设置且余额耗尽的密钥会在访问上游前返回 HTTP 402；未设置余额的密钥继续放行。完整密钥不会写入账单数据库。
 
@@ -97,15 +97,6 @@ make install-local \\
 
 `install-local` 会直接覆盖当前 Tag 对应的同版本插件文件，不创建本地备份。以后重新执行 `make install-local` 并重启 CLIProxyAPI 即可加载新构建；账单数据库和插件配置不会被修改。
 
-从旧版单行 JSON 数据库升级时，先停止 CLIProxyAPI，再单独执行一次迁移：
-
-```bash
-make migrate-legacy \
-  CPA_BILLING_DB=/absolute/path/to/billing.db
-```
-
-迁移命令会把旧 `billing_state.state_json` 转换到 `billing_settings`、`pricing_rules`、`usage_events`、`model_aggregates` 和 `api_key_aggregates` 表，成功后删除旧 `billing_state` 表。插件运行时不包含旧 JSON 格式兼容逻辑；不需要历史数据时可以跳过迁移，插件会初始化一组空的新表。
-
 启动 CLIProxyAPI 后，在管理页进入“费用统计”查看账单，或进入“模型费用”维护价格。管理 API 路由为：
 
 - `GET /v0/management/cpa-billing-management/summary`
@@ -116,7 +107,7 @@ make migrate-legacy \
 - `PUT /v0/management/cpa-billing-management/key-balances`
 - `POST /v0/management/cpa-billing-management/reset`
 
-`POST /v0/management/cpa-billing-management/prices/sync` 默认使用 LiteLLM；模型费用页面可选择 LiteLLM、Models.dev 或 OpenRouter，并通过 `source=litellm`、`source=models.dev` 或 `source=openrouter` 查询参数指定来源。管理页面会额外传入 `preview=1`，此时接口只返回拟新增/拟更新规则，不写入数据库；用户确认后仍通过已有的 `PUT /prices` 保存。省略 `preview` 时保留旧版“同步并立即应用”的兼容行为。同步只下载公开价格目录，不会上传本地账单数据；不同来源的价格单位会统一转换为当前币种/每百万 token。
+`POST /v0/management/cpa-billing-management/prices/sync` 默认使用 LiteLLM；模型费用页面可选择 LiteLLM、Models.dev 或 OpenRouter，并通过 `source=litellm`、`source=models.dev` 或 `source=openrouter` 查询参数指定来源。接口必须传入 `preview=1`，只返回拟新增/拟更新规则，不写入数据库；用户确认后通过已有的 `PUT /prices` 保存。同步只下载公开价格目录，不会上传本地账单数据；不同来源的价格单位会统一转换为当前币种/每百万 token。
 
 插件资源页面为：
 

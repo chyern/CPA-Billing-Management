@@ -7,7 +7,7 @@ import (
 )
 
 // PriceRule is a price per one million tokens. Match accepts a model name,
-// alias, provider/model, or * for the fallback rule.
+// alias, or * for the default rule.
 type PriceRule struct {
 	Match                   string  `json:"match"`
 	InputPerMillion         float64 `json:"input_per_million"`

@@ -19,7 +19,11 @@ func renderPage(pageTemplate, pageScript []byte, data Data) ([]byte, error) {
 	}
 	page := bytes.ReplaceAll(pageTemplate, stylesPlaceholder, styles)
 	page = bytes.ReplaceAll(page, authPlaceholder, managementAuthScript)
-	page = bytes.ReplaceAll(page, scriptPlaceholder, pageScript)
+	combinedScript := make([]byte, 0, len(localeScript)+len(pageScript)+1)
+	combinedScript = append(combinedScript, localeScript...)
+	combinedScript = append(combinedScript, '\n')
+	combinedScript = append(combinedScript, pageScript...)
+	page = bytes.ReplaceAll(page, scriptPlaceholder, combinedScript)
 	page = bytes.ReplaceAll(page, initialPlaceholder, []byte(initial))
 	return page, nil
 }

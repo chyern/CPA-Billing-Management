@@ -225,6 +225,30 @@ func TestCalculateCostAndModelPriceFallback(t *testing.T) {
 	}
 }
 
+func TestModelPriceIgnoresProvider(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetRules([]PriceRule{{Match: "gpt-test", InputPerMillion: 3}}); err != nil {
+		t.Fatal(err)
+	}
+	store.HandleUsage(UsageRecord{Provider: "codex", Model: "gpt-test", InputTokens: 1_000_000})
+	if got := store.Summary().Totals.Cost; got != 3 {
+		t.Fatalf("model-only price = %v, want 3", got)
+	}
+
+	// Existing provider/model entries are interpreted by their model segment;
+	// the event provider must not affect the selected price rule.
+	if err := store.SetRules([]PriceRule{{Match: "openai/gpt-test", InputPerMillion: 4}}); err != nil {
+		t.Fatal(err)
+	}
+	store.HandleUsage(UsageRecord{Provider: "codex", Model: "gpt-test", InputTokens: 1_000_000})
+	if got := store.Summary().Totals.Cost; got != 7 {
+		t.Fatalf("provider-independent legacy spelling cost = %v, want 7", got)
+	}
+}
+
 func TestMaskAPIKey(t *testing.T) {
 	tests := map[string]string{
 		"":                      "",
