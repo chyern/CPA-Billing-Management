@@ -33,12 +33,68 @@ async function callerScope(value) {
   return [...digest].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
+let balanceSearchQuery = '';
+
+function showToast(message, isError = false) {
+  if (!message) return;
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = 'cpa-toast ' + (isError ? 'error' : 'success');
+  const icon = isError
+    ? '<svg class="cpa-toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+    : '<svg class="cpa-toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
+  toast.innerHTML = icon + '<span>' + escapeHTML(message) + '</span>';
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(10px) scale(0.95)';
+    setTimeout(() => toast.remove(), 200);
+  }, 3000);
+}
+
+function copyToClipboard(text) {
+  if (!text) return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      showToast('已复制：' + text);
+    }).catch(() => {
+      fallbackCopy(text);
+    });
+  } else {
+    fallbackCopy(text);
+  }
+}
+
+function fallbackCopy(text) {
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand('copy');
+    showToast('已复制：' + text);
+  } catch (_) {
+    showToast('复制失败', true);
+  }
+  document.body.removeChild(textarea);
+}
+
 function showStatus(message, error = false) {
   const element = document.getElementById('status');
   const dot = document.getElementById('statusDot');
-  element.textContent = message;
-  element.className = 'muted status' + (error ? ' error' : '');
-  dot.className = 'status-dot' + (error ? ' error' : '');
+  if (element) {
+    element.textContent = message;
+    element.className = 'muted status' + (error ? ' error' : '');
+  }
+  if (dot) {
+    dot.className = 'status-dot' + (error ? ' error' : '');
+  }
+  if (message) {
+    showToast(message, error);
+  }
 }
 
 async function requestJSON(url, options = {}) {
@@ -65,23 +121,59 @@ function renderCards() {
   const spent = balances.reduce((total, item) => total + Number(item.cost || 0), 0);
   const exhausted = configured.filter(item => Number(item.balance || 0) <= 0).length;
   const cards = [
-    ['密钥数量', balances.length],
-    ['已设置余额', configured.length],
-    ['当前余额合计', formatMoney(remaining)],
-    ['累计费用', formatMoney(spent)],
-    ['余额耗尽', exhausted],
+    {
+      label: '密钥数量',
+      value: balances.length,
+      icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+    },
+    {
+      label: '已设置余额',
+      value: configured.length,
+      icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>',
+    },
+    {
+      label: '当前余额合计',
+      value: formatMoney(remaining),
+      isPrimary: true,
+      icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 5H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Z"/><path d="M16 12h.01"/></svg>',
+    },
+    {
+      label: '累计费用',
+      value: formatMoney(spent),
+      icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
+    },
+    {
+      label: '余额耗尽',
+      value: exhausted,
+      isAlert: true,
+      hasFailed: exhausted > 0,
+      icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    },
   ];
-  document.getElementById('balanceCards').innerHTML = cards.map((card, index) =>
-    '<div class="card' + (index === 2 ? ' primary-kpi' : '') + '"><div class="card-header-row"><span class="label">' + card[0] + '</span></div><div class="value">' + card[1] + '</div></div>'
-  ).join('');
+  document.getElementById('balanceCards').innerHTML = cards.map(card => {
+    let cls = 'card';
+    if (card.isPrimary) cls += ' primary-kpi';
+    if (card.isAlert && card.hasFailed) cls += ' alert-kpi has-failed';
+    return '<div class="' + cls + '"><div class="card-header-row"><span class="label">' + card.label + '</span><span class="card-icon">' + card.icon + '</span></div><div class="value">' + card.value + '</div></div>';
+  }).join('');
 }
 
 function renderBalances() {
-  const rows = balances.map(item => {
+  let displayBalances = balances;
+  if (balanceSearchQuery) {
+    const q = balanceSearchQuery.toLowerCase();
+    displayBalances = balances.filter(item =>
+      (item.api_key || '').toLowerCase().includes(q)
+      || (item.note || '').toLowerCase().includes(q)
+      || (item.api_key_value || '').toLowerCase().includes(q)
+    );
+  }
+
+  const rows = displayBalances.map(item => {
     const itemID = escapeHTML(item.api_key_id);
     const keyCell = item.pending
-      ? '<input class="new-key-input" data-id="' + itemID + '" type="text" autocomplete="off" value="' + escapeHTML(item.api_key_value || '') + '" placeholder="输入完整 API Key">'
-      : '<span class="code-tag">' + escapeHTML(item.api_key || '未命名密钥') + '</span>';
+      ? '<div class="code-tag-wrap"><input class="new-key-input" data-id="' + itemID + '" type="text" autocomplete="off" value="' + escapeHTML(item.api_key_value || '') + '" placeholder="输入完整 API Key"><button type="button" class="copy-btn" data-copy-val="' + escapeHTML(item.api_key_value || '') + '" title="复制完整 API Key" aria-label="复制 API Key"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>'
+      : '<div class="code-tag-wrap"><span class="code-tag">' + escapeHTML(item.api_key || '未命名密钥') + '</span>' + (item.api_key ? '<button type="button" class="copy-btn" data-copy-val="' + escapeHTML(item.api_key_value || item.api_key) + '" title="复制 API Key" aria-label="复制 API Key"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>' : '') + '</div>';
     let status = '<span class="pill">未设置</span>';
     if (item.pending) {
       status = '<span class="pill sync-pill">待保存</span>';
@@ -99,9 +191,12 @@ function renderBalances() {
       + '<td class="status-cell">' + status + '</td>'
       + '<td class="actions-cell"><button class="btn primary btn-sm row-save" data-id="' + itemID + '">保存</button><button class="btn danger btn-sm row-delete" data-id="' + itemID + '"' + (item.pending ? ' disabled' : '') + '>删除</button></td></tr>';
   }).join('');
+
+  const emptyView = '<div class="empty"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><div class="empty-title">' + (balanceSearchQuery ? '未找到匹配项' : '暂无 API Key') + '</div><div class="empty-desc">仅显示 CLIProxyAPI 当前配置的 API Key。配置客户端密钥或产生 usage 事件后会显示在这里。</div></div>';
+
   document.getElementById('balances').innerHTML = rows
     ? '<table class="balance-table"><colgroup><col class="key-column"><col class="note-column"><col class="requests-column"><col class="cost-column"><col class="balance-column"><col class="status-column"><col class="actions-column"></colgroup><thead><tr><th>API Key</th><th>备注</th><th class="num">请求数</th><th class="num">累计费用</th><th class="num">当前余额</th><th class="status-cell">状态</th><th class="actions-cell">操作</th></tr></thead><tbody>' + rows + '</tbody></table>'
-    : '<div class="empty">暂无 API Key。配置客户端密钥或产生 usage 事件后会显示在这里。</div>';
+    : emptyView;
   renderCards();
 }
 
@@ -264,6 +359,25 @@ document.getElementById('balances').addEventListener('click', async event => {
   }
   await saveBalances();
 });
+
+document.addEventListener('click', event => {
+  const copyBtn = event.target.closest('.copy-btn');
+  if (copyBtn) {
+    const val = copyBtn.dataset.copyVal;
+    if (val) {
+      copyToClipboard(val);
+    }
+    return;
+  }
+});
+
+const balanceSearchInput = document.getElementById('balanceSearch');
+if (balanceSearchInput) {
+  balanceSearchInput.addEventListener('input', e => {
+    balanceSearchQuery = e.target.value.trim();
+    renderBalances();
+  });
+}
 
 document.getElementById('addAPIKey').addEventListener('click', () => {
   if (balances.some(item => item.pending)) {

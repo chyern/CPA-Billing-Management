@@ -23,7 +23,7 @@
   </header>
 
   <main>
-    <section id="balanceCards" class="grid"></section>
+    <section id="balanceCards" class="grid grid-5"></section>
     <section class="panel rules-panel">
       <div class="rules-panel-header">
         <div>
@@ -31,11 +31,16 @@
           <p class="muted">仅显示 CLIProxyAPI 当前配置的 API Key，并保持配置顺序。留空表示不跟踪余额，完整密钥不会写入账单数据库。</p>
         </div>
         <div class="add-key-controls">
+          <div class="search-box">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input type="text" id="balanceSearch" placeholder="搜索 Key 或备注...">
+          </div>
           <button class="btn primary" id="addAPIKey">添加</button>
         </div>
       </div>
       <div id="balances" class="rules"></div>
     </section>
+    <div id="toastContainer" class="cpa-toast-container"></div>
   </main>
 
   <footer class="footer">CPA Billing Management · 当前币种：<span id="currency"></span> · 未设置余额的密钥不拦截</footer>

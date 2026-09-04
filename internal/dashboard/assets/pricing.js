@@ -76,11 +76,18 @@ function ruleMatchesModel(value, model) {
 function filterRules() {
   const input = document.getElementById('ruleSearch');
   const query = (input && input.value || '').trim().toLowerCase();
+  let visibleCount = 0;
   document.querySelectorAll('#rules tbody tr').forEach(row => {
     const matchInput = row.querySelector('input.match');
     const text = (matchInput ? matchInput.value : '').toLowerCase();
-    row.style.display = !query || text.includes(query) ? '' : 'none';
+    const visible = !query || text.includes(query);
+    row.style.display = visible ? '' : 'none';
+    if (visible) visibleCount++;
   });
+  const emptyView = document.getElementById('noRulesFound');
+  if (emptyView) {
+    emptyView.style.display = (visibleCount === 0 && rules.length > 0) ? '' : 'none';
+  }
 }
 
 function renderRules() {
@@ -89,6 +96,7 @@ function renderRules() {
       const change = syncChanges[String(rule.match || '').toLowerCase()];
       const badge = change ? '<span class="pill sync-pill">' + (change.action === 'add' ? '待新增' : '待更新') + '</span>' : '';
       const match = String(rule.match || '').trim().toLowerCase();
+      const wildcardBadge = match === '*' ? '<span class="pill wildcard-pill">默认兜底</span>' : '';
       const catalogRule = catalogModels.some(model => ruleMatchesModel(rule.match, model.model));
       const readonly = catalogRule ? ' readonly title="模型名称来自 CLIProxyAPI 模型列表"' : '';
       const removeButton = catalogRule
@@ -96,7 +104,7 @@ function renderRules() {
         : '<button class="btn danger" data-action="remove" data-index="' + index + '">删除</button>';
       const saveButton = '<button class="btn primary" data-action="save-row" data-index="' + index + '"' + (rule._dirty ? '' : ' disabled') + '>保存</button>';
       const trCls = change ? ' class="rule-row-changed"' : '';
-      return '<tr data-i="' + index + '"' + trCls + '>' + '<td><div class="rule-match"><input class="match" data-k="match" placeholder="例如：gpt-4o" value="' + (rule._draft ? '' : escapeHTML(rule.match)) + '"' + readonly + '>' + badge + '</div></td>'
+      return '<tr data-i="' + index + '"' + trCls + '>' + '<td><div class="rule-match"><input class="match" data-k="match" placeholder="例如：gpt-4o" value="' + (rule._draft ? '' : escapeHTML(rule.match)) + '"' + readonly + '>' + badge + wildcardBadge + '</div></td>'
       + '<td><input data-k="input_per_million" type="number" min="0" step="0.000001" placeholder="例如：2.5" value="' + valueFor(rule, 'input_per_million') + '"></td>'
       + '<td><input data-k="output_per_million" type="number" min="0" step="0.000001" placeholder="例如：10" value="' + valueFor(rule, 'output_per_million') + '"></td>'
       + '<td><input data-k="cache_read_per_million" type="number" min="0" step="0.000001" placeholder="例如：0.25" value="' + valueFor(rule, 'cache_read_per_million') + '"></td>'
@@ -106,7 +114,11 @@ function renderRules() {
     })(),
   ).join('');
 
-  document.getElementById('rules').innerHTML = '<table><thead><tr><th>匹配</th><th class="num">输入 / 1M</th><th class="num">输出 / 1M</th><th class="num">缓存读取 / 1M</th><th class="num">缓存创建 / 1M</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  const emptyView = '<div id="noRulesFound" class="empty" style="display:none"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><div class="empty-title">未找到匹配项</div></div>';
+
+  document.getElementById('rules').innerHTML = (rows
+    ? '<table><thead><tr><th>匹配</th><th class="num">输入 / 1M</th><th class="num">输出 / 1M</th><th class="num">缓存读取 / 1M</th><th class="num">缓存创建 / 1M</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>'
+    : '<div class="empty">暂无价格规则</div>') + emptyView;
   filterRules();
 }
 
@@ -155,17 +167,53 @@ function readRules() {
   });
 }
 
+function showToast(message, isError = false) {
+  if (!message) return;
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = 'cpa-toast ' + (isError ? 'error' : 'success');
+  const icon = isError
+    ? '<svg class="cpa-toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+    : '<svg class="cpa-toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
+  toast.innerHTML = icon + '<span>' + escapeHTML(message) + '</span>';
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(10px) scale(0.95)';
+    setTimeout(() => toast.remove(), 200);
+  }, 3000);
+}
+
 function validateRules() {
+  document.querySelectorAll('#rules input').forEach(input => input.classList.remove('invalid'));
   const seen = new Set();
   for (let index = 0; index < rules.length; index++) {
     const rule = rules[index];
+    const row = document.querySelector('#rules tr[data-i="' + index + '"]');
     const match = String(rule.match || '').trim();
     const key = match.toLowerCase();
-    if (!match) return '第 ' + (index + 1) + ' 条规则的匹配不能为空';
-    if (seen.has(key)) return '第 ' + (index + 1) + ' 条规则与其他规则重复：' + match;
+    if (!match) {
+      if (row) {
+        const input = row.querySelector('input.match');
+        if (input) input.classList.add('invalid');
+      }
+      return '第 ' + (index + 1) + ' 条规则的匹配不能为空';
+    }
+    if (seen.has(key)) {
+      if (row) {
+        const input = row.querySelector('input.match');
+        if (input) input.classList.add('invalid');
+      }
+      return '第 ' + (index + 1) + ' 条规则与其他规则重复：' + match;
+    }
     seen.add(key);
     for (const field of priceFields) {
       if (!Number.isFinite(rule[field]) || rule[field] < 0) {
+        if (row) {
+          const input = row.querySelector('input[data-k="' + field + '"]');
+          if (input) input.classList.add('invalid');
+        }
         return '第 ' + (index + 1) + ' 条规则的价格必须是大于等于 0 的有效数字';
       }
     }
@@ -178,6 +226,9 @@ function showStatus(message, error = false) {
   if (element) {
     element.textContent = message;
     element.className = 'muted status' + (error ? ' error' : '');
+  }
+  if (message) {
+    showToast(message, error);
   }
 }
 

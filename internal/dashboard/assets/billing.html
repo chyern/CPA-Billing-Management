@@ -35,20 +35,58 @@
       <div class="query-controls">
         <div class="quick-dates" id="quickDates">
           <button type="button" class="pill-btn active" data-days="0">今天</button>
+          <button type="button" class="pill-btn" data-days="-1">昨天</button>
           <button type="button" class="pill-btn" data-days="7">近 7 天</button>
           <button type="button" class="pill-btn" data-days="30">近 30 天</button>
+          <button type="button" class="pill-btn" data-days="all">全部</button>
         </div>
         <div class="date-inputs-wrap">
           <label class="field" for="startDate"><span>开始日期</span><input id="startDate" type="date"></label>
           <label class="field" for="endDate"><span>结束日期</span><input id="endDate" type="date"></label>
           <button class="btn primary" id="query">查询</button>
+          <button class="btn" id="resetQuery">重置</button>
         </div>
       </div>
     </section>
     <section id="cards" class="grid"></section>
-    <section class="panel"><h2>按模型汇总</h2><div id="models"></div></section>
-    <section class="panel"><h2>按 API Key 汇总</h2><div id="apiKeys"></div></section>
-    <section class="panel"><h2>最近事件</h2><div id="events"></div></section>
+    <section class="panel">
+      <div class="panel-heading">
+        <h2>按模型汇总 <span class="count-badge" id="modelsCount"></span></h2>
+        <div class="panel-actions">
+          <div class="search-box">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input type="text" id="modelSearch" placeholder="搜索模型...">
+          </div>
+        </div>
+      </div>
+      <div id="models" class="table-responsive"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-heading">
+        <h2>按 API Key 汇总 <span class="count-badge" id="keysCount"></span></h2>
+        <div class="panel-actions">
+          <div class="search-box">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input type="text" id="keySearch" placeholder="搜索 API Key...">
+          </div>
+        </div>
+      </div>
+      <div id="apiKeys" class="table-responsive"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-heading">
+        <h2>最近事件 <span class="count-badge" id="eventsCount"></span></h2>
+        <div class="panel-actions">
+          <div class="filter-pills" id="eventStatusFilter">
+            <button type="button" class="filter-pill active" data-status="all">全部</button>
+            <button type="button" class="filter-pill" data-status="success">仅成功</button>
+            <button type="button" class="filter-pill" data-status="failed">仅失败</button>
+          </div>
+        </div>
+      </div>
+      <div id="events" class="table-responsive"></div>
+    </section>
+    <div id="toastContainer" class="cpa-toast-container"></div>
   </main>
 
   <footer class="footer">CPA Billing Management · 模型费用为估算值，请以供应商账单为准</footer>

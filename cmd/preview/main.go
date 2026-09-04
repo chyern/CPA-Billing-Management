@@ -74,17 +74,33 @@ func main() {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"currency": summary.Currency, "rules": rules})
 			return
+		case "/v0/management/cpa-billing-management/key-balances":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"currency": summary.Currency,
+				"balances": []map[string]any{
+					{"api_key_id": "demo-key-1", "caller_scope": "scope-1", "api_key": "sk-a••••••demo", "balance": 15.50, "cost": 30.7, "requests": 96, "note": "Production API Key"},
+					{"api_key_id": "demo-key-2", "caller_scope": "scope-2", "api_key": "sk-b••••••test", "balance": 0.0, "cost": 4.0284, "requests": 32, "note": "Testing Agent Key"},
+				},
+			})
+			return
+		case "/v0/management/api-keys":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"api-keys": []string{"sk-a1234567890abcdef1234567890demo", "sk-b9876543210fedcba0987654321test"},
+			})
+			return
 		}
-		if (r.URL.Path == "/v0/resource/plugins/cpa-billing-management/billing" || r.URL.Path == "/v0/resource/plugins/cpa-billing-management/pricing") && r.URL.Query().Get("format") == "json" {
+		if (r.URL.Path == "/v0/resource/plugins/cpa-billing-management/billing" || r.URL.Path == "/v0/resource/plugins/cpa-billing-management/pricing" || r.URL.Path == "/v0/resource/plugins/cpa-billing-management/wallet") && r.URL.Query().Get("format") == "json" {
 			http.Error(w, "resource JSON is disabled; use the authenticated management API", http.StatusNotFound)
 			return
 		}
 		var page []byte
 		var err error
-		if r.URL.Path == "/pricing" {
+		if r.URL.Path == "/pricing" || r.URL.Path == "/v0/resource/plugins/cpa-billing-management/pricing" {
 			page, err = dashboard.RenderPricing(dashboard.Data{Rules: rules, Currency: summary.Currency})
-		} else if r.URL.Path == "/v0/resource/plugins/cpa-billing-management/pricing" {
-			page, err = dashboard.RenderPricing(dashboard.Data{})
+		} else if r.URL.Path == "/wallet" || r.URL.Path == "/v0/resource/plugins/cpa-billing-management/wallet" {
+			page, err = dashboard.RenderBalances(dashboard.Data{Currency: summary.Currency})
 		} else if r.URL.Path == "/v0/resource/plugins/cpa-billing-management/billing" {
 			page, err = dashboard.RenderBilling(dashboard.Data{})
 		} else {
