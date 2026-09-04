@@ -13,6 +13,7 @@ CLIProxyAPI 自定义插件：接收 usage 事件，优先使用上游金额，�
 - 在 CLIProxyAPI 管理页增加“费用统计”菜单，展示总费用、按模型汇总、按脱敏 API Key 汇总，以及最近请求的总耗时和首 Token 耗时；最近事件支持分页和可选的 5/10/15 秒自动刷新；
 - 在独立的“模型费用”页面编辑价格规则；费用页会优先列出 CLIProxyAPI 首页“模型”卡片对应的 `/v1/models` 当前暴露模型，没有匹配价格规则的模型默认显示为 0，并标记为“未配置模型费用”。无法访问该接口时回退到 CLIProxyAPI 模型目录。同步价格时先获取本地与上游的差异，确认后再保存，避免一次拉取直接覆盖人工调整。
 - 模型费用页默认不添加价格规则；支持按需从 [LiteLLM 公共模型价格目录](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)、[Models.dev](https://models.dev/) 或 [OpenRouter Models API](https://openrouter.ai/docs/api-reference/list-available-models) 同步当前已使用且可识别的模型，未识别的模型仍可手动配置。
+- 提供独立的“密钥余额”页面，可为客户端 API Key 设置当前余额；后续 usage 事件产生费用时自动扣减，并展示累计请求、累计费用和余额状态。已设置且余额耗尽的密钥会在访问上游前返回 HTTP 402；未设置余额的密钥继续放行。完整密钥不会写入账单数据库。
 
 当前 CLIProxyAPI 的 `UsagePlugin` ABI 主要提供 token、耗时等字段，通常不包含金额，因此大多数文本模型会走模型价格估算。价格单位是配置币种/每百万 token，估算结果请以供应商账单为准。
 
@@ -111,6 +112,8 @@ make migrate-legacy \
 - `GET /v0/management/cpa-billing-management/prices`
 - `PUT /v0/management/cpa-billing-management/prices`
 - `POST /v0/management/cpa-billing-management/prices/sync`
+- `GET /v0/management/cpa-billing-management/key-balances`
+- `PUT /v0/management/cpa-billing-management/key-balances`
 - `POST /v0/management/cpa-billing-management/reset`
 
 `POST /v0/management/cpa-billing-management/prices/sync` 默认使用 LiteLLM；模型费用页面可选择 LiteLLM、Models.dev 或 OpenRouter，并通过 `source=litellm`、`source=models.dev` 或 `source=openrouter` 查询参数指定来源。管理页面会额外传入 `preview=1`，此时接口只返回拟新增/拟更新规则，不写入数据库；用户确认后仍通过已有的 `PUT /prices` 保存。省略 `preview` 时保留旧版“同步并立即应用”的兼容行为。同步只下载公开价格目录，不会上传本地账单数据；不同来源的价格单位会统一转换为当前币种/每百万 token。
@@ -122,6 +125,10 @@ make migrate-legacy \
 模型费用资源页面为：
 
 `/v0/resource/plugins/cpa-billing-management/pricing`
+
+密钥余额资源页面为：
+
+`/v0/resource/plugins/cpa-billing-management/wallet`
 
 资源页面会复用 CLIProxyAPI 管理中心的浏览器登录状态：从同源 `localStorage` 的
 `cli-proxy-auth` 读取管理密钥，兼容管理中心的 `enc::v1::` 混淆格式，并通过

@@ -20,4 +20,10 @@ var (
 
 	//go:embed assets/pricing.js
 	pricingScript []byte
+
+	//go:embed assets/balances.html
+	balancesTemplate []byte
+
+	//go:embed assets/balances.js
+	balancesScript []byte
 )

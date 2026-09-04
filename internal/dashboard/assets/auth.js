@@ -3,6 +3,60 @@ const AUTH_STORAGE_KEY = 'cli-proxy-auth';
 const AUTH_LOGIN_MARKER = 'isLoggedIn';
 const AUTH_PREFIX = 'enc::v1::';
 const AUTH_SALT = 'cli-proxy-api-webui::secure-storage';
+const HOST_THEME_STORAGE_KEY = 'cli-proxy-theme';
+
+function systemTheme() {
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function storedHostTheme() {
+  try {
+    const raw = localStorage.getItem(HOST_THEME_STORAGE_KEY);
+    if (!raw) return systemTheme();
+    const payload = JSON.parse(raw);
+    const state = payload && typeof payload === 'object' && payload.state && typeof payload.state === 'object'
+      ? payload.state
+      : payload;
+    const theme = state && typeof state.theme === 'string' ? state.theme : '';
+    if (theme === 'dark' || theme === 'white' || theme === 'light') return theme;
+    return systemTheme();
+  } catch (_) {
+    return systemTheme();
+  }
+}
+
+function currentHostTheme() {
+  try {
+    if (window.top && window.top !== window) {
+      const value = window.top.document.documentElement.getAttribute('data-theme');
+      if (value === 'dark' || value === 'white') return value;
+      return 'light';
+    }
+  } catch (_) {}
+  return storedHostTheme();
+}
+
+function applyHostTheme() {
+  document.documentElement.setAttribute('data-theme', currentHostTheme());
+}
+
+function initializeHostThemeSync() {
+  applyHostTheme();
+  try {
+    if (window.top && window.top !== window) {
+      const hostRoot = window.top.document.documentElement;
+      new MutationObserver(applyHostTheme).observe(hostRoot, {attributes: true, attributeFilter: ['data-theme']});
+    }
+  } catch (_) {}
+  window.addEventListener('storage', event => {
+    if (!event.key || event.key === HOST_THEME_STORAGE_KEY) applyHostTheme();
+  });
+  if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyHostTheme);
+  }
+}
+
+initializeHostThemeSync();
 
 function readManagementKey() {
   try {

@@ -50,13 +50,31 @@ func TestRenderContainsSeparateModelCostDashboard(t *testing.T) {
 	}
 }
 
+func TestRenderContainsKeyBalanceDashboard(t *testing.T) {
+	raw, err := RenderBalances(Data{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, expected := range []string{"CPA 密钥余额", "API Key 余额", "备注", "填写密钥用途", "当前余额", "累计费用", "保存余额", "key-balances", "crypto.subtle", "完整密钥不会写入账单数据库"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("rendered key-balance dashboard does not contain %q", expected)
+		}
+	}
+	for _, unexpected := range []string{"页面切换", "nav-tabs", "模型价格规则", "最近事件"} {
+		if strings.Contains(text, unexpected) {
+			t.Fatalf("key-balance dashboard must not contain %q", unexpected)
+		}
+	}
+}
+
 func TestRenderDoesNotEmbedManagementKey(t *testing.T) {
 	raw, err := RenderBilling(Data{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, expected := range []string{"readManagementKey", "AUTH_STORAGE_KEY", "Authorization:'Bearer '+MANAGEMENT_KEY"} {
+	for _, expected := range []string{"readManagementKey", "AUTH_STORAGE_KEY", "Authorization:'Bearer '+MANAGEMENT_KEY", "cli-proxy-theme", "MutationObserver", "data-theme"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("rendered billing dashboard does not contain %q", expected)
 		}
@@ -68,8 +86,9 @@ func TestRenderDoesNotEmbedManagementKey(t *testing.T) {
 
 func TestRenderResolvesEmbeddedAssetPlaceholders(t *testing.T) {
 	for name, render := range map[string]func(Data) ([]byte, error){
-		"billing": RenderBilling,
-		"pricing": RenderPricing,
+		"billing":  RenderBilling,
+		"pricing":  RenderPricing,
+		"balances": RenderBalances,
 	} {
 		raw, err := render(Data{})
 		if err != nil {

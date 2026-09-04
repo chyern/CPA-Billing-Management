@@ -34,7 +34,7 @@ func TestPluginBillingFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !resultContains(t, registerRaw, `"usage_plugin":true`) || !resultContains(t, registerRaw, `"management_api":true`) {
+	if !resultContains(t, registerRaw, `"usage_plugin":true`) || !resultContains(t, registerRaw, `"request_interceptor":true`) || !resultContains(t, registerRaw, `"management_api":true`) {
 		t.Fatalf("registration is missing billing capabilities: %s", registerRaw)
 	}
 	if resultContains(t, registerRaw, `"management_key"`) {
@@ -47,7 +47,7 @@ func TestPluginBillingFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !resultContains(t, managementRegisterRaw, `"Menu":"费用统计"`) || !resultContains(t, managementRegisterRaw, `"Menu":"模型费用"`) || !resultContains(t, managementRegisterRaw, `cpa-billing-management/prices`) || !resultContains(t, managementRegisterRaw, `cpa-billing-management/prices/sync`) {
+	if !resultContains(t, managementRegisterRaw, `"Menu":"费用统计"`) || !resultContains(t, managementRegisterRaw, `"Menu":"模型费用"`) || !resultContains(t, managementRegisterRaw, `"Menu":"密钥余额"`) || !resultContains(t, managementRegisterRaw, `cpa-billing-management/prices`) || !resultContains(t, managementRegisterRaw, `cpa-billing-management/prices/sync`) || !resultContains(t, managementRegisterRaw, `cpa-billing-management/key-balances`) {
 		t.Fatalf("management registration is missing billing or model-cost routes: %s", managementRegisterRaw)
 	}
 	if err := store.SetRules([]billing.PriceRule{{Match: "test-model", InputPerMillion: 1, OutputPerMillion: 2}}); err != nil {
@@ -248,6 +248,47 @@ func TestPluginBillingFlow(t *testing.T) {
 	}
 }
 
+func TestRequestInterceptorRejectsOnlyConfiguredExhaustedKeys(t *testing.T) {
+	billingStore, err := billing.NewStore(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = billingStore.Close() })
+	key := "sk-exhausted-balance"
+	callerScope := billing.CallerScope(key)
+	if err := billingStore.SetKeyBalances([]billing.APIKeyBalance{{APIKeyID: billing.APIKeyIdentifier(key), APIKey: key, Balance: 0}}); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, _ := json.Marshal(abi.RequestInterceptRequest{RequestID: "request-1", Metadata: map[string]any{"caller_scope": callerScope}})
+	responseRaw, err := handleRequestInterceptBefore(billingStore, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(responseRaw, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var response abi.RequestInterceptResponse
+	if err := json.Unmarshal(envelope.Result, &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Terminate || response.StatusCode != http.StatusPaymentRequired || !contains(string(response.ResponseBody), "insufficient_api_key_balance") {
+		t.Fatalf("exhausted response = %+v", response)
+	}
+
+	unconfiguredRaw, _ := json.Marshal(abi.RequestInterceptRequest{RequestID: "request-2", Metadata: map[string]any{"caller_scope": billing.CallerScope("sk-unconfigured")}})
+	unconfiguredResponseRaw, err := handleRequestInterceptBefore(billingStore, unconfiguredRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resultContains(t, unconfiguredResponseRaw, `"Terminate":true`) {
+		t.Fatalf("unconfigured key must be allowed: %s", unconfiguredResponseRaw)
+	}
+}
+
 func TestConfiguredDataDir(t *testing.T) {
 	for _, test := range []struct {
 		raw  string
@@ -416,6 +457,36 @@ func TestModelsDevAliasChoosesCheapestNonZeroPrice(t *testing.T) {
 	}
 	if result.Matched != 1 || len(store.Rules()) != 1 || store.Rules()[0].InputPerMillion != 2 {
 		t.Fatalf("models.dev alias result = %+v, rules=%+v", result, store.Rules())
+	}
+}
+
+func TestModelsDevCodexAliasPrefersOfficialOpenAIPrice(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"xpersona":{"id":"xpersona","models":{"gpt-5.6-sol":{"id":"gpt-5.6-sol","cost":{"input":1.5,"output":12,"cache_read":0.15}}}},
+			"reseller":{"id":"reseller","models":{"sol":{"id":"openai/gpt-5.6-sol","cost":{"input":2,"output":10,"cache_read":0.2}}}},
+			"openai":{"id":"openai","models":{"gpt-5.6-sol":{"id":"gpt-5.6-sol","cost":{"input":4,"output":20,"cache_read":0.4,"cache_write":5}}}}
+		}`))
+	}))
+	defer server.Close()
+	store, err := billing.NewStore(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.HandleUsage(billing.UsageRecord{Provider: "codex", Model: "gpt-5.6-sol", InputTokens: 1})
+	source := pricingSource{ID: "models.dev", Name: "Models.dev", URL: server.URL, Decode: decodeModelsDevCatalog}
+	result, err := syncUpstreamPricesFromSourceWithClient(store, server.Client(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := store.Rules()
+	if result.Matched != 1 || len(rules) != 1 {
+		t.Fatalf("models.dev official result = %+v, rules=%+v", result, rules)
+	}
+	price := rules[0]
+	if price.Match != "codex/gpt-5.6-sol" || price.InputPerMillion != 4 || price.OutputPerMillion != 20 || price.CacheReadPerMillion != 0.4 || price.CacheCreationPerMillion != 5 {
+		t.Fatalf("official OpenAI price was not preferred: %+v", price)
 	}
 }
 
@@ -594,6 +665,51 @@ func TestPricingManagementListsObservedModelsWithZeroDefaults(t *testing.T) {
 	}
 	if len(response.Rules) != 1 || response.Rules[0].Match != "openai/gpt-unpriced" || response.Rules[0].InputPerMillion != 0 || response.Rules[0].OutputPerMillion != 0 {
 		t.Fatalf("observed unpriced model rules = %+v", response.Rules)
+	}
+}
+
+func TestKeyBalanceManagementAndResource(t *testing.T) {
+	store, err := billing.NewStore(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "sk-management-balance"
+	id := billing.APIKeyIdentifier(key)
+	body, _ := json.Marshal(map[string]any{
+		"balances": []billing.APIKeyBalance{{APIKeyID: id, APIKey: key, Balance: 12}},
+		"notes":    []billing.APIKeyBalance{{APIKeyID: id, APIKey: key, Note: "生产调用"}},
+	})
+	putReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodPut, Path: "/v0/management/cpa-billing-management/key-balances", Body: body})
+	putRaw, err := handleManagement(store, putReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := managementStatus(t, putRaw); got != http.StatusOK {
+		t.Fatalf("key balance PUT status = %d", got)
+	}
+	store.HandleUsage(billing.UsageRecord{APIKey: key, Model: "upstream-priced", Cost: 3, CostProvided: true})
+	getReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodGet, Path: "/v0/management/cpa-billing-management/key-balances"})
+	getRaw, err := handleManagement(store, getReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot struct {
+		Balances []billing.APIKeyBalance `json:"balances"`
+	}
+	if err := json.Unmarshal(managementBody(t, getRaw), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Balances) != 1 || snapshot.Balances[0].Balance != 9 || snapshot.Balances[0].APIKey != billing.MaskAPIKey(key) || snapshot.Balances[0].Note != "生产调用" {
+		t.Fatalf("key balance snapshot = %+v", snapshot)
+	}
+	resourceReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodGet, Path: balancesPath})
+	resourceRaw, err := handleManagement(store, resourceReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(managementBody(t, resourceRaw))
+	if !contains(page, "CPA 密钥余额") || !contains(page, "key-balances") || contains(page, key) {
+		t.Fatal("key balance resource page must contain balance controls without secrets")
 	}
 }
 

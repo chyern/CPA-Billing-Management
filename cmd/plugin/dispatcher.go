@@ -22,6 +22,14 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 			return okEnvelope(map[string]any{"accepted": false, "error": err.Error()})
 		}
 		return okEnvelope(map[string]any{"accepted": true})
+	case abi.MethodRequestInterceptBefore:
+		billingStore, err := getBillingStore("")
+		if err != nil {
+			return nil, err
+		}
+		return handleRequestInterceptBefore(billingStore, request)
+	case abi.MethodRequestInterceptAfter:
+		return handleRequestInterceptAfter(request)
 	case abi.MethodManagementRegister:
 		return okEnvelope(managementRegistration())
 	case abi.MethodManagementHandle:
@@ -64,7 +72,7 @@ func registration() abi.Registration {
 				{Name: "cpa_billing_data_dir", Type: "string", Description: "cpa_billing_data_dir：SQLite 账单数据库目录；留空时使用插件安装目录。"},
 			},
 		},
-		Capabilities: abi.Capabilities{UsagePlugin: true, ManagementAPI: true},
+		Capabilities: abi.Capabilities{UsagePlugin: true, RequestInterceptor: true, ManagementAPI: true},
 	}
 }
 
@@ -73,12 +81,15 @@ func managementRegistration() abi.ManagementRegistrationResponse {
 		Resources: []abi.ResourceRoute{
 			{Path: "/billing", Menu: "费用统计", Description: "查看 usage 事件、token 用量和费用汇总。"},
 			{Path: "/pricing", Menu: "模型费用", Description: "配置模型每百万 token 的估算价格。"},
+			{Path: "/wallet", Menu: "密钥余额", Description: "查看并维护客户端 API Key 的当前余额。"},
 		},
 		Routes: []abi.ManagementRoute{
 			{Method: http.MethodGet, Path: "/cpa-billing-management/summary"},
 			{Method: http.MethodGet, Path: "/cpa-billing-management/prices"},
 			{Method: http.MethodPut, Path: "/cpa-billing-management/prices"},
 			{Method: http.MethodPost, Path: "/cpa-billing-management/prices/sync"},
+			{Method: http.MethodGet, Path: "/cpa-billing-management/key-balances"},
+			{Method: http.MethodPut, Path: "/cpa-billing-management/key-balances"},
 			{Method: http.MethodPost, Path: "/cpa-billing-management/reset"},
 		},
 	}

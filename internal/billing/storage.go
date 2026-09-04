@@ -75,10 +75,58 @@ func EnsureSchema(db *sql.DB) error {
 			cached_tokens INTEGER NOT NULL DEFAULT 0,
 			total_tokens INTEGER NOT NULL DEFAULT 0,
 			cost REAL NOT NULL DEFAULT 0
+		);
+		CREATE TABLE IF NOT EXISTS api_key_balances (
+			api_key_id TEXT PRIMARY KEY,
+			api_key TEXT NOT NULL,
+			balance REAL NOT NULL,
+			caller_scope TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS api_key_balance_notes (
+			api_key_id TEXT PRIMARY KEY,
+			api_key TEXT NOT NULL DEFAULT '',
+			note TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL
 		)
 	`)
 	if err != nil {
 		return fmt.Errorf("initialize normalized billing database: %w", err)
+	}
+	if err := ensureAPIKeyBalanceCallerScope(db); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureAPIKeyBalanceCallerScope(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(api_key_balances)`)
+	if err != nil {
+		return fmt.Errorf("inspect API key balance schema: %w", err)
+	}
+	hasCallerScope := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan API key balance schema: %w", err)
+		}
+		if name == "caller_scope" {
+			hasCallerScope = true
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if !hasCallerScope {
+		if _, err := db.Exec(`ALTER TABLE api_key_balances ADD COLUMN caller_scope TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add API key caller scope: %w", err)
+		}
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_balances_caller_scope ON api_key_balances(caller_scope) WHERE caller_scope <> ''`); err != nil {
+		return fmt.Errorf("index API key caller scope: %w", err)
 	}
 	return nil
 }

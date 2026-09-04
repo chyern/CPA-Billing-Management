@@ -23,6 +23,8 @@ func handleManagement(store *billing.Store, raw []byte) ([]byte, error) {
 		return handleBillingResource(req)
 	case path == pricingPath:
 		return handlePricingResource(req)
+	case path == balancesPath:
+		return handleBalancesResource(req)
 	case req.Method == http.MethodGet && strings.HasSuffix(path, "/summary"):
 		page := billing.ParseInt(queryValue(req.Query, "page"))
 		pageSize := billing.ParseInt(queryValue(req.Query, "page_size"))
@@ -37,6 +39,10 @@ func handleManagement(store *billing.Store, raw []byte) ([]byte, error) {
 		return handlePricingSync(store, req)
 	case req.Method == http.MethodPut && strings.HasSuffix(path, "/prices"):
 		return handlePricingUpdate(store, req.Body)
+	case req.Method == http.MethodGet && strings.HasSuffix(path, "/key-balances"):
+		return keyBalancesResponse(store)
+	case req.Method == http.MethodPut && strings.HasSuffix(path, "/key-balances"):
+		return handleKeyBalancesUpdate(store, req.Body)
 	case req.Method == http.MethodPost && strings.HasSuffix(path, "/reset"):
 		if err := store.Reset(); err != nil {
 			return jsonManagementError(http.StatusInternalServerError, err.Error())
@@ -45,6 +51,33 @@ func handleManagement(store *billing.Store, raw []byte) ([]byte, error) {
 	default:
 		return jsonManagementError(http.StatusNotFound, "unknown management route")
 	}
+}
+
+func keyBalancesResponse(store *billing.Store) ([]byte, error) {
+	balances, err := store.KeyBalances()
+	if err != nil {
+		return jsonManagementError(http.StatusInternalServerError, err.Error())
+	}
+	return jsonManagementResponse(map[string]any{"currency": store.Currency(), "balances": balances})
+}
+
+func handleKeyBalancesUpdate(store *billing.Store, body []byte) ([]byte, error) {
+	var payload struct {
+		Balances []billing.APIKeyBalance  `json:"balances"`
+		Notes    *[]billing.APIKeyBalance `json:"notes"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return jsonManagementError(http.StatusBadRequest, err.Error())
+	}
+	if err := store.SetKeyBalances(payload.Balances); err != nil {
+		return jsonManagementError(http.StatusBadRequest, err.Error())
+	}
+	if payload.Notes != nil {
+		if err := store.SetKeyBalanceNotes(*payload.Notes); err != nil {
+			return jsonManagementError(http.StatusBadRequest, err.Error())
+		}
+	}
+	return keyBalancesResponse(store)
 }
 
 func summaryTimeRange(query map[string][]string) (time.Time, time.Time, error) {
@@ -221,6 +254,20 @@ func handlePricingResource(req abi.ManagementRequest) ([]byte, error) {
 	default:
 		return jsonManagementError(http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+func handleBalancesResource(req abi.ManagementRequest) ([]byte, error) {
+	if resourceMethod(req) != http.MethodGet {
+		return jsonManagementError(http.StatusMethodNotAllowed, "method not allowed")
+	}
+	if resourceJSONRequested(req) {
+		return jsonManagementError(http.StatusUnauthorized, "management login required")
+	}
+	page, err := dashboard.RenderBalances(dashboard.Data{})
+	if err != nil {
+		return nil, err
+	}
+	return htmlManagementResponse(page)
 }
 
 func resourceMethod(req abi.ManagementRequest) string {

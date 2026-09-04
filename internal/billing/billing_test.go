@@ -345,3 +345,84 @@ func TestSummaryPageRangeFiltersEventsAndAggregates(t *testing.T) {
 		t.Fatalf("filtered summary = %+v", summary)
 	}
 }
+
+func TestAPIKeyBalanceIsPersistedAndDecrementedByUsageCost(t *testing.T) {
+	dataDir := t.TempDir()
+	store, err := NewStore(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "sk-balance-test"
+	id := APIKeyIdentifier(key)
+	callerScope := CallerScope(key)
+	if err := store.SetKeyBalances([]APIKeyBalance{{APIKeyID: id, APIKey: key, Balance: 10}}); err != nil {
+		t.Fatal(err)
+	}
+	if balance, configured, err := store.BalanceForCallerScope(callerScope); err != nil || !configured || balance != 10 {
+		t.Fatalf("balance lookup = %v, %v, %v; want 10, true, nil", balance, configured, err)
+	}
+	store.HandleUsage(UsageRecord{APIKey: key, Model: "priced-upstream", Cost: 2.5, CostProvided: true})
+	balances, err := store.KeyBalances()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(balances) != 1 || !balances[0].Configured || balances[0].CallerScope != callerScope || balances[0].Balance != 7.5 || balances[0].Cost != 2.5 || balances[0].APIKey != MaskAPIKey(key) {
+		t.Fatalf("balances after usage = %+v", balances)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := NewStore(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reloaded.Close() })
+	balances, err = reloaded.KeyBalances()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(balances) != 1 || balances[0].Balance != 7.5 {
+		t.Fatalf("reloaded balances = %+v", balances)
+	}
+	if balance, configured, err := reloaded.BalanceForCallerScope(callerScope); err != nil || !configured || balance != 7.5 {
+		t.Fatalf("reloaded balance lookup = %v, %v, %v; want 7.5, true, nil", balance, configured, err)
+	}
+}
+
+func TestAPIKeyBalanceNotePersistsWithoutEnablingBalanceTracking(t *testing.T) {
+	dataDir := t.TempDir()
+	store, err := NewStore(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "sk-note-only"
+	id := APIKeyIdentifier(key)
+	if err := store.SetKeyBalanceNotes([]APIKeyBalance{{APIKeyID: id, APIKey: key, Note: "内部测试账号"}}); err != nil {
+		t.Fatal(err)
+	}
+	balances, err := store.KeyBalances()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(balances) != 1 || balances[0].Configured || balances[0].Note != "内部测试账号" || balances[0].APIKey != MaskAPIKey(key) {
+		t.Fatalf("note-only balance row = %+v", balances)
+	}
+	if _, configured, err := store.BalanceForCallerScope(CallerScope(key)); err != nil || configured {
+		t.Fatalf("note-only balance lookup configured = %v, err = %v; want false, nil", configured, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := NewStore(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reloaded.Close() })
+	balances, err = reloaded.KeyBalances()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(balances) != 1 || balances[0].Note != "内部测试账号" || balances[0].Configured {
+		t.Fatalf("reloaded note-only balance row = %+v", balances)
+	}
+}

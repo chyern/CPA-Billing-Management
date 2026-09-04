@@ -17,8 +17,10 @@ type normalizedModelPrice struct {
 }
 
 type normalizedPriceCatalog struct {
-	exact   map[string]normalizedModelPrice
-	aliases map[string]normalizedModelPrice
+	exact           map[string]normalizedModelPrice
+	exactPriority   map[string]int
+	aliases         map[string]normalizedModelPrice
+	aliasesPriority map[string]int
 }
 
 type flexiblePrice float64
@@ -106,6 +108,7 @@ func decodeModelsDevCatalog(reader io.Reader) (*normalizedPriceCatalog, error) {
 	}
 	catalog := newNormalizedPriceCatalog()
 	for providerKey, provider := range raw {
+		priority := officialModelsDevProviderPriority(providerKey, provider.ID)
 		for modelKey, model := range provider.Models {
 			if model.Cost.Input == nil {
 				continue
@@ -118,15 +121,15 @@ func decodeModelsDevCatalog(reader io.Reader) (*normalizedPriceCatalog, error) {
 			for _, providerID := range providerIDs {
 				for _, modelID := range modelIDs {
 					if strings.TrimSpace(providerID) != "" && strings.TrimSpace(modelID) != "" {
-						catalog.addExact(providerID+"/"+modelID, price)
+						catalog.addExactWithPriority(providerID+"/"+modelID, price, priority)
 					}
 				}
 			}
 			for _, modelID := range modelIDs {
-				catalog.addAlias(modelID, price)
+				catalog.addAliasWithPriority(modelID, price, priority)
 				if strings.Contains(modelID, "/") {
-					catalog.addExact(modelID, price)
-					catalog.addAlias(lastModelSegment(modelID), price)
+					catalog.addExactWithPriority(modelID, price, priority)
+					catalog.addAliasWithPriority(lastModelSegment(modelID), price, priority)
 				}
 			}
 		}
@@ -158,30 +161,58 @@ func decodeOpenRouterCatalog(reader io.Reader) (*normalizedPriceCatalog, error) 
 }
 
 func newNormalizedPriceCatalog() *normalizedPriceCatalog {
-	return &normalizedPriceCatalog{exact: make(map[string]normalizedModelPrice), aliases: make(map[string]normalizedModelPrice)}
-}
-func (catalog *normalizedPriceCatalog) addExact(key string, price normalizedModelPrice) {
-	if key = normalizeCatalogKey(key); key != "" {
-		catalog.exact[key] = price
+	return &normalizedPriceCatalog{
+		exact:           make(map[string]normalizedModelPrice),
+		exactPriority:   make(map[string]int),
+		aliases:         make(map[string]normalizedModelPrice),
+		aliasesPriority: make(map[string]int),
 	}
 }
+func (catalog *normalizedPriceCatalog) addExact(key string, price normalizedModelPrice) {
+	catalog.addExactWithPriority(key, price, 0)
+}
 func (catalog *normalizedPriceCatalog) addAlias(key string, price normalizedModelPrice) {
+	catalog.addAliasWithPriority(key, price, 0)
+}
+func (catalog *normalizedPriceCatalog) addExactWithPriority(key string, price normalizedModelPrice, priority int) {
+	key = normalizeCatalogKey(key)
+	if key == "" {
+		return
+	}
+	if existing, exists := catalog.exact[key]; exists {
+		currentPriority := catalog.exactPriority[key]
+		if priority < currentPriority || (priority == currentPriority && !preferNormalizedPrice(price, existing)) {
+			return
+		}
+	}
+	catalog.exact[key] = price
+	catalog.exactPriority[key] = priority
+}
+func (catalog *normalizedPriceCatalog) addAliasWithPriority(key string, price normalizedModelPrice, priority int) {
 	key = normalizeCatalogKey(key)
 	if key == "" {
 		return
 	}
 	if existing, exists := catalog.aliases[key]; exists {
-		// A model name can be published by many providers. Keep a usable
-		// alias by selecting the cheapest non-zero input price, matching the
-		// conflict policy used by New API's models.dev synchronizer. Previously
-		// any price difference marked the alias ambiguous, causing almost every
-		// popular model to be skipped during sync.
-		if preferNormalizedPrice(price, existing) {
-			catalog.aliases[key] = price
+		currentPriority := catalog.aliasesPriority[key]
+		// Official model-owner entries always win. Price comparison is only a
+		// deterministic fallback between entries at the same trust level.
+		if priority < currentPriority || (priority == currentPriority && !preferNormalizedPrice(price, existing)) {
+			return
 		}
-		return
 	}
 	catalog.aliases[key] = price
+	catalog.aliasesPriority[key] = priority
+}
+
+func officialModelsDevProviderPriority(providerIDs ...string) int {
+	for _, providerID := range providerIDs {
+		switch normalizeCatalogKey(providerID) {
+		case "openai", "anthropic", "google", "mistral", "cohere", "xai", "deepseek":
+			return 100
+		}
+	}
+	return 0
 }
 
 func preferNormalizedPrice(next, current normalizedModelPrice) bool {
@@ -203,9 +234,16 @@ func preferNormalizedPrice(next, current normalizedModelPrice) bool {
 }
 func (catalog *normalizedPriceCatalog) lookup(provider, model string) (normalizedModelPrice, bool) {
 	model, provider = normalizeCatalogKey(model), normalizeCatalogKey(provider)
-	if provider != "" && model != "" {
-		if price, ok := catalog.exact[provider+"/"+model]; ok {
-			return price, true
+	if model != "" {
+		for _, candidate := range catalogProviderCandidates(provider) {
+			if price, ok := catalog.exact[candidate+"/"+model]; ok {
+				return price, true
+			}
+		}
+		if provider != "" {
+			if price, ok := catalog.exact[provider+"/"+model]; ok {
+				return price, true
+			}
 		}
 	}
 	if price, ok := catalog.exact[model]; ok {
@@ -218,6 +256,23 @@ func (catalog *normalizedPriceCatalog) lookup(provider, model string) (normalize
 		return price, true
 	}
 	return normalizedModelPrice{}, false
+}
+
+func catalogProviderCandidates(provider string) []string {
+	provider = normalizeCatalogKey(provider)
+	switch provider {
+	case "codex":
+		return []string{"openai"}
+	case "claude":
+		return []string{"anthropic"}
+	case "gemini", "vertex", "aistudio", "antigravity":
+		return []string{"google"}
+	default:
+		if provider != "" {
+			return []string{provider}
+		}
+		return nil
+	}
 }
 func (catalog *normalizedPriceCatalog) empty() bool {
 	return len(catalog.exact) == 0 && len(catalog.aliases) == 0

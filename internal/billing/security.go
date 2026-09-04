@@ -2,6 +2,7 @@ package billing
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -34,6 +35,18 @@ func APIKeyIdentifier(value string) string {
 	}
 	sum := sha256.Sum256([]byte(value))
 	return fmt.Sprintf("%x", sum[:8])
+}
+
+// CallerScope matches CLIProxyAPI's irreversible downstream-caller identity.
+// Keeping this derivation here lets the management page store the host identity
+// alongside a balance without persisting the complete API key.
+func CallerScope(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte("cli-proxy-api:caller-scope:v1\x00" + value))
+	return hex.EncodeToString(sum[:])
 }
 
 // MaskSensitiveSource protects source values that are actually credentials in

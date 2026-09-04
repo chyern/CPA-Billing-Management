@@ -66,6 +66,11 @@ func (s *Store) persistUsageLocked(event UsageEvent, modelKey, apiKey string) er
 		if err := upsertAPIKeyAggregate(tx, apiKey, s.state.APIKeyAggregates[apiKey]); err != nil {
 			return err
 		}
+		if event.Cost > 0 && apiKey != "" {
+			if _, err := tx.Exec(`UPDATE api_key_balances SET balance = balance - ?, updated_at = ? WHERE api_key_id = ?`, event.Cost, s.state.UpdatedAt.Format(time.RFC3339Nano), apiKey); err != nil {
+				return fmt.Errorf("decrement API key balance %q: %w", apiKey, err)
+			}
+		}
 		return nil
 	})
 }

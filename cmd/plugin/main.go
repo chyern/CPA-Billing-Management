@@ -66,6 +66,7 @@ const (
 	pluginID     = "cpa-billing-management"
 	resourcePath = "/v0/resource/plugins/" + pluginID + "/billing"
 	pricingPath  = "/v0/resource/plugins/" + pluginID + "/pricing"
+	balancesPath = "/v0/resource/plugins/" + pluginID + "/wallet"
 )
 
 // pluginVersion is injected by the build with the release tag. Keeping a
