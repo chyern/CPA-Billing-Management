@@ -352,7 +352,16 @@ document.getElementById('rules').addEventListener('click', async event => {
     return;
   }
   const label = rules[index] && rules[index].match || '这条模型费用规则';
-  if (!window.confirm(t('确定要删除“') + label + t('”吗？删除会立即生效。'))) return;
+  const confirmed = await (window.showConfirmDialog ? window.showConfirmDialog({
+    title: t('确认删除'),
+    message: t('确定要删除此模型价格规则吗？'),
+    target: label,
+    detail: t('删除会立即生效。'),
+    confirmText: t('删除'),
+    cancelText: t('取消'),
+    danger: true,
+  }) : window.confirm(t('确定要删除“') + label + t('”吗？删除会立即生效。')));
+  if (!confirmed) return;
   const removed = rules.splice(index, 1)[0];
   try {
     await saveRules(rules);

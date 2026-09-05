@@ -58,7 +58,7 @@ function copyToClipboard(text) {
   if (!text) return;
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(() => {
-      showToast('已复制：' + text);
+      showToast(t('已复制'));
     }).catch(() => {
       fallbackCopy(text);
     });
@@ -76,7 +76,7 @@ function fallbackCopy(text) {
   textarea.select();
   try {
     document.execCommand('copy');
-    showToast('已复制：' + text);
+    showToast(t('已复制'));
   } catch (_) {
     showToast('复制失败', true);
   }
@@ -287,7 +287,16 @@ async function saveBalances() {
 
 async function deleteAPIKey(item) {
   const label = item && item.api_key || '该 API Key';
-  if (!window.confirm(t('确定要删除 ') + label + t(' 吗？\n\n这会从 CLIProxyAPI 主配置中永久移除该 API Key，同时清除插件中的余额和备注。'))) {
+  const confirmed = await (window.showConfirmDialog ? window.showConfirmDialog({
+    title: t('确认删除 API Key'),
+    message: t('确定要删除此 API Key 吗？'),
+    target: label,
+    detail: t('这会从 CLIProxyAPI 主配置中永久移除该 API Key，同时清除插件中的余额和备注。'),
+    confirmText: t('删除'),
+    cancelText: t('取消'),
+    danger: true,
+  }) : window.confirm(t('确定要删除 ') + label + t(' 吗？\n\n这会从 CLIProxyAPI 主配置中永久移除该 API Key，同时清除插件中的余额和备注。')));
+  if (!confirmed) {
     return;
   }
   try {

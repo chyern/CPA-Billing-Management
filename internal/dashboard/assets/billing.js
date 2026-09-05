@@ -1,5 +1,6 @@
 const SUMMARY_API = '/v0/management/cpa-billing-management/summary';
 const PAGE_SIZE = 20;
+const t = value => typeof window.cpaTranslate === 'function' ? window.cpaTranslate(value) : value;
 
 let refreshTimer = null;
 let modelSearchQuery = '';
@@ -73,7 +74,7 @@ function copyToClipboard(text) {
   if (!text) return;
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(() => {
-      showToast('已复制：' + text);
+      showToast(t('已复制'));
     }).catch(() => {
       fallbackCopy(text);
     });
@@ -91,7 +92,7 @@ function fallbackCopy(text) {
   textarea.select();
   try {
     document.execCommand('copy');
-    showToast('已复制：' + text);
+    showToast(t('已复制'));
   } catch (_) {
     showToast('复制失败', true);
   }

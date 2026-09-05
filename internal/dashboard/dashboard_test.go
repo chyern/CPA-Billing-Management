@@ -68,6 +68,51 @@ func TestRenderContainsKeyBalanceDashboard(t *testing.T) {
 	}
 }
 
+func TestCopyToastDoesNotRevealAPIKey(t *testing.T) {
+	for name, render := range map[string]func(Data) ([]byte, error){
+		"billing":  RenderBilling,
+		"balances": RenderBalances,
+	} {
+		raw, err := render(Data{})
+		if err != nil {
+			t.Fatalf("render %s page: %v", name, err)
+		}
+		text := string(raw)
+		if strings.Contains(text, "已复制：' + text") {
+			t.Fatalf("%s copy toast must not include the copied API key", name)
+		}
+		if !strings.Contains(text, "showToast(t('已复制'))") {
+			t.Fatalf("%s copy toast should use the translated generic confirmation", name)
+		}
+	}
+}
+
+func TestRenderIncludesCustomConfirmModal(t *testing.T) {
+	for name, render := range map[string]func(Data) ([]byte, error){
+		"billing":  RenderBilling,
+		"pricing":  RenderPricing,
+		"balances": RenderBalances,
+	} {
+		raw, err := render(Data{})
+		if err != nil {
+			t.Fatalf("render %s page: %v", name, err)
+		}
+		text := string(raw)
+		for _, expected := range []string{
+			"window.showConfirmDialog",
+			"cpa-modal-backdrop",
+			"cpa-modal-card",
+			"cpa-modal-title",
+			"cpa-modal-btn-confirm",
+			"cpa-modal-btn-cancel",
+		} {
+			if !strings.Contains(text, expected) {
+				t.Fatalf("%s page is missing confirm modal element %q", name, expected)
+			}
+		}
+	}
+}
+
 func TestRenderDoesNotEmbedManagementKey(t *testing.T) {
 	raw, err := RenderBilling(Data{})
 	if err != nil {
