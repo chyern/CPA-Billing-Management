@@ -3,6 +3,8 @@ const PAGE_SIZE = 20;
 const t = value => typeof window.cpaTranslate === 'function' ? window.cpaTranslate(value) : value;
 
 let refreshTimer = null;
+let pageRequestID = 0;
+let pageRequestPending = false;
 let modelSearchQuery = '';
 let keySearchQuery = '';
 let eventStatusFilterVal = 'all';
@@ -91,7 +93,7 @@ function fallbackCopy(text) {
   document.body.appendChild(textarea);
   textarea.select();
   try {
-    document.execCommand('copy');
+    if (!document.execCommand('copy')) throw new Error('copy failed');
     showToast(t('已复制'));
   } catch (_) {
     showToast('复制失败', true);
@@ -230,19 +232,13 @@ function renderEvents() {
   const countBadge = document.getElementById('eventsCount');
   if (countBadge) countBadge.textContent = state.recent_events_total ? String(state.recent_events_total) : '';
 
-  if (eventStatusFilterVal === 'success') {
-    events = events.filter(e => !e.failed);
-  } else if (eventStatusFilterVal === 'failed') {
-    events = events.filter(e => e.failed);
-  }
-
   const emptyView = '<div class="empty"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><div class="empty-title">暂无最近事件</div><div class="empty-desc">最近处理的 API 请求事件会实时出现在这里</div></div>';
 
   const eventTable = events.length
       ? '<table><thead><tr><th>时间</th><th>模型</th><th>API Key</th><th class="num">耗时/首字</th><th class="num">输入/缓存</th><th class="num">输出</th><th class="num">费用 ' + costHelp + '</th><th>状态</th></tr></thead><tbody>'
       + events.map(event => '<tr>'
         + '<td>' + escapeHTML(new Date(event.requested_at).toLocaleString()) + '</td>'
-        + '<td>' + escapeHTML(event.model || '-') + ((!event.priced_by || event.priced_by === '*') ? ' <span class="pill">未配置模型费用</span>' : '') + '</td>'
+        + '<td>' + escapeHTML(event.model || '-') + (!event.priced ? ' <span class="pill">未配置模型费用</span>' : '') + '</td>'
         + '<td><div class="code-tag-wrap"><span class="code-tag">' + escapeHTML(event.api_key || '-') + '</span>' + (event.api_key ? '<button type="button" class="copy-btn" data-copy="' + escapeHTML(event.api_key) + '" title="复制 API Key" aria-label="复制 API Key"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>' : '') + '</div></td>'
         + '<td class="num"><div class="dual-metric"><span class="dual-metric-primary">' + formatDuration(event.latency_ns) + '</span><span class="dual-metric-secondary">首字 ' + formatDuration(event.ttft_ns) + '</span></div></td>'
         + '<td class="num"><div class="dual-metric"><span class="dual-metric-primary">' + formatNumber(event.input_tokens) + '</span><span class="dual-metric-secondary">缓存 ' + formatNumber(event.cached_tokens) + '</span></div></td>'
@@ -283,6 +279,24 @@ document.addEventListener('click', event => {
     return;
   }
 
+  // Help controls are nested inside sortable headers. Handle their whole
+  // region first so opening or reading a tooltip never changes table order.
+  const button = event.target.closest('[data-action="cost-help"]');
+  if (button) {
+    event.stopPropagation();
+    const tooltip = button.parentElement.querySelector('.cost-help-tooltip');
+    if (!tooltip) return;
+    const expanded = button.getAttribute('aria-expanded') === 'true';
+    closeCostHelp();
+    if (!expanded) {
+      button.setAttribute('aria-expanded', 'true');
+      tooltip.hidden = false;
+    }
+    return;
+  }
+  if (event.target.closest('.cost-help')) return;
+  closeCostHelp();
+
   const modelSortHeader = event.target.closest('[data-sort-model]');
   if (modelSortHeader) {
     const field = modelSortHeader.dataset.sortModel;
@@ -309,20 +323,6 @@ document.addEventListener('click', event => {
     return;
   }
 
-  const button = event.target.closest('[data-action="cost-help"]');
-  if (!button) {
-    if (!event.target.closest('.cost-help')) closeCostHelp();
-    return;
-  }
-  event.stopPropagation();
-  const tooltip = button.parentElement.querySelector('.cost-help-tooltip');
-  if (!tooltip) return;
-  const expanded = button.getAttribute('aria-expanded') === 'true';
-  closeCostHelp();
-  if (!expanded) {
-    button.setAttribute('aria-expanded', 'true');
-    tooltip.hidden = false;
-  }
 });
 
 function showStatus(message, error = false) {
@@ -337,30 +337,40 @@ function showStatus(message, error = false) {
   }
 }
 
-async function loadPage(page) {
+async function loadPage(page, automatic = false) {
+  // An automatic refresh must not supersede a pending date/filter/page query.
+  if (automatic && pageRequestPending) return;
   if (!requireManagementKey()) return;
+  const requestID = ++pageRequestID;
+  pageRequestPending = true;
   const pageNumber = Math.max(1, page);
   try {
     const params = new URLSearchParams({page: String(pageNumber), page_size: String(PAGE_SIZE)});
     if (startDate.value) params.set('start', startDate.value);
     if (endDate.value) params.set('end', endDate.value);
+    params.set('event_status', eventStatusFilterVal);
     const response = await fetch(SUMMARY_API + '?' + params.toString(), {
       credentials: 'same-origin',
       headers: authHeaders(),
     });
+    if (requestID !== pageRequestID) return;
     if (response.status === 401) {
       redirectToManagementLogin();
       return;
     }
     if (!response.ok) throw new Error(await response.text() || response.statusText);
     const payload = await response.json();
+    if (requestID !== pageRequestID) return;
     state = payload.summary || payload;
     render();
     showStatus('已更新');
   } catch (error) {
+    if (requestID !== pageRequestID) return;
     const msg = error.message || '请求失败';
     showStatus('更新失败：' + msg, true);
     showToast('更新失败：' + msg, true);
+  } finally {
+    if (requestID === pageRequestID) pageRequestPending = false;
   }
 }
 
@@ -444,7 +454,7 @@ if (eventStatusFilter) {
     eventStatusFilter.querySelectorAll('.filter-pill').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     eventStatusFilterVal = btn.dataset.status || 'all';
-    renderEvents();
+    loadPage(1);
   });
 }
 
@@ -452,7 +462,7 @@ function configureAutoRefresh(seconds) {
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = null;
   if (seconds > 0) {
-    refreshTimer = setInterval(() => loadPage(Number(state.recent_events_page || 1)), seconds * 1000);
+    refreshTimer = setInterval(() => loadPage(Number(state.recent_events_page || 1), true), seconds * 1000);
   }
 }
 

@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -15,25 +16,151 @@ func (s *Store) SummaryPage(page, pageSize int) Summary {
 // SummaryPageRange returns a summary limited to [start, end). Zero boundaries
 // disable the corresponding limit. Event costs are already fixed at ingestion.
 func (s *Store) SummaryPageRange(page, pageSize int, start, end time.Time) Summary {
+	summary, err := s.SummaryPageRangeStatus(page, pageSize, start, end, "all")
+	if err != nil {
+		s.mu.Lock()
+		s.lastErr = err
+		s.mu.Unlock()
+	}
+	return summary
+}
+
+// SummaryPageRangeStatus filters only event rows by success/failure. Top-level
+// totals and groups always describe the complete date range. SQL queries read
+// persisted history; the bounded in-memory event cache is never a total source.
+func (s *Store) SummaryPageRangeStatus(page, pageSize int, start, end time.Time, eventStatus string) (Summary, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.db == nil {
+		return Summary{}, fmt.Errorf("billing database is closed")
+	}
+	status := strings.ToLower(strings.TrimSpace(eventStatus))
+	if status == "" {
+		status = "all"
+	}
+	if status != "all" && status != "success" && status != "failed" {
+		return Summary{}, fmt.Errorf("invalid event status %q", eventStatus)
+	}
 	page, pageSize = normalizePage(page, pageSize)
-	filtered := s.state.Events
-	if !start.IsZero() || !end.IsZero() {
-		filtered = make([]UsageEvent, 0, len(s.state.Events))
-		for _, event := range s.state.Events {
-			if !start.IsZero() && event.RequestedAt.Before(start) {
-				continue
-			}
-			if !end.IsZero() && !event.RequestedAt.Before(end) {
-				continue
-			}
-			filtered = append(filtered, event)
+	where, args := eventDateWhere(start, end)
+	var models []*Aggregate
+	var apiKeys []*APIKeyAggregate
+	var totals Totals
+	var unpriced []string
+	if start.IsZero() && end.IsZero() {
+		models, totals, unpriced = s.modelSummaryLocked()
+		apiKeys = s.apiKeySummaryLocked()
+	} else {
+		var err error
+		models, apiKeys, totals, unpriced, err = s.summarizeDateRangeLocked(where, args)
+		if err != nil {
+			return Summary{}, err
 		}
 	}
-	models, apiKeys, totals, unpricedModels := summarizeEvents(filtered)
-	events, page, pages := paginateEvents(filtered, page, pageSize)
-	return Summary{Version: s.state.Version, Currency: s.state.Currency, UpdatedAt: s.state.UpdatedAt, Totals: totals, Models: models, APIKeys: apiKeys, RecentEvents: events, RecentEventsTotal: len(filtered), RecentEventsPage: page, RecentEventsPages: pages, RecentEventsPageSize: pageSize, UnpricedModels: unpricedModels}
+	if status != "all" {
+		where += " AND failed = ?"
+		args = append(args, boolInt64(status == "failed"))
+	}
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM usage_events`+where, args...).Scan(&count); err != nil {
+		return Summary{}, fmt.Errorf("count usage events: %w", err)
+	}
+	pages := 1
+	if count > 0 {
+		pages = 1 + (count-1)/pageSize
+	}
+	if page > pages {
+		page = pages
+	}
+	pageArgs := append(append([]any(nil), args...), pageSize, (page-1)*pageSize)
+	rows, err := s.db.Query(`SELECT `+eventColumns+` FROM usage_events`+where+` ORDER BY id DESC LIMIT ? OFFSET ?`, pageArgs...)
+	if err != nil {
+		return Summary{}, fmt.Errorf("query usage events: %w", err)
+	}
+	events, err := scanUsageEvents(rows)
+	if err != nil {
+		return Summary{}, err
+	}
+	// Preserve the API's chronological ordering inside each newest-first page.
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
+	return Summary{Version: s.state.Version, Currency: s.state.Currency, UpdatedAt: s.state.UpdatedAt, Totals: totals, Models: models, APIKeys: apiKeys, RecentEvents: events, RecentEventsTotal: count, RecentEventsPage: page, RecentEventsPages: pages, RecentEventsPageSize: pageSize, UnpricedModels: unpriced}, nil
+}
+
+func eventDateWhere(start, end time.Time) (string, []any) {
+	where := " WHERE 1=1"
+	var args []any
+	// Ingested timestamps are UTC RFC3339Nano. Removing the trailing Z makes
+	// fractional seconds compare correctly against boundaries on whole seconds.
+	if !start.IsZero() {
+		where += " AND rtrim(requested_at, 'Z') >= ?"
+		args = append(args, strings.TrimSuffix(start.UTC().Format(time.RFC3339Nano), "Z"))
+	}
+	if !end.IsZero() {
+		where += " AND rtrim(requested_at, 'Z') < ?"
+		args = append(args, strings.TrimSuffix(end.UTC().Format(time.RFC3339Nano), "Z"))
+	}
+	return where, args
+}
+
+func (s *Store) summarizeDateRangeLocked(where string, args []any) ([]*Aggregate, []*APIKeyAggregate, Totals, []string, error) {
+	const sums = `COUNT(*), SUM(failed), SUM(input_tokens), SUM(output_tokens), SUM(reasoning_tokens), SUM(cached_tokens), SUM(total_tokens), SUM(cost)`
+	rows, err := s.db.Query(`SELECT provider, model, `+sums+`, MIN(priced) FROM usage_events`+where+` GROUP BY lower(trim(provider)),lower(trim(model)) ORDER BY SUM(cost) DESC,provider,model`, args...)
+	if err != nil {
+		return nil, nil, Totals{}, nil, fmt.Errorf("summarize usage models: %w", err)
+	}
+	models := make([]*Aggregate, 0)
+	var totals Totals
+	missing := make(map[string]struct{})
+	for rows.Next() {
+		var a Aggregate
+		if err := rows.Scan(&a.Provider, &a.Model, &a.Requests, &a.FailedRequests, &a.InputTokens, &a.OutputTokens, &a.ReasoningTokens, &a.CachedTokens, &a.TotalTokens, &a.Cost, &a.Priced); err != nil {
+			rows.Close()
+			return nil, nil, Totals{}, nil, fmt.Errorf("scan usage model summary: %w", err)
+		}
+		models = append(models, &a)
+		totals.Requests += a.Requests
+		totals.FailedRequests += a.FailedRequests
+		totals.InputTokens += a.InputTokens
+		totals.OutputTokens += a.OutputTokens
+		totals.ReasoningTokens += a.ReasoningTokens
+		totals.CachedTokens += a.CachedTokens
+		totals.TotalTokens += a.TotalTokens
+		totals.Cost += a.Cost
+		if !a.Priced {
+			missing[a.Model] = struct{}{}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, nil, Totals{}, nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, nil, Totals{}, nil, err
+	}
+	unpriced := make([]string, 0, len(missing))
+	for model := range missing {
+		unpriced = append(unpriced, model)
+	}
+	sort.Strings(unpriced)
+	rows, err = s.db.Query(`SELECT api_key, `+sums+` FROM usage_events`+where+` GROUP BY api_key_id ORDER BY COUNT(*) DESC,api_key`, args...)
+	if err != nil {
+		return nil, nil, Totals{}, nil, fmt.Errorf("summarize usage API keys: %w", err)
+	}
+	defer rows.Close()
+	keys := make([]*APIKeyAggregate, 0)
+	for rows.Next() {
+		var a APIKeyAggregate
+		if err := rows.Scan(&a.APIKey, &a.Requests, &a.FailedRequests, &a.InputTokens, &a.OutputTokens, &a.ReasoningTokens, &a.CachedTokens, &a.TotalTokens, &a.Cost); err != nil {
+			return nil, nil, Totals{}, nil, fmt.Errorf("scan usage API key summary: %w", err)
+		}
+		if strings.TrimSpace(a.APIKey) == "" {
+			a.APIKey = "未提供"
+		}
+		keys = append(keys, &a)
+	}
+	return models, keys, totals, unpriced, rows.Err()
 }
 
 func summarizeEvents(events []UsageEvent) ([]*Aggregate, []*APIKeyAggregate, Totals, []string) {
@@ -64,7 +191,7 @@ func summarizeEvents(events []UsageEvent) ([]*Aggregate, []*APIKeyAggregate, Tot
 		aggregate.CachedTokens += event.CachedTokens
 		aggregate.TotalTokens += event.TotalTokens
 		aggregate.Cost += event.Cost
-		priced := strings.TrimSpace(event.PricedBy) != "" && event.PricedBy != "*"
+		priced := event.Priced
 		aggregate.Priced = aggregate.Priced && priced
 		if !priced {
 			unpriced[event.Model] = struct{}{}

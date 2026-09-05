@@ -75,30 +75,56 @@ const (
 var pluginVersion = "dev"
 
 var (
-	storeMu      sync.Mutex
-	store        *billing.Store
-	storeErr     error
-	storeDataDir string
+	// Hold across each dispatch so reconfiguration cannot close a store that
+	// an in-flight usage or management request is still using.
+	lifecycleMu      sync.RWMutex
+	storeMu          sync.Mutex
+	store            *billing.Store
+	storeErr         error
+	storeDataDir     string
+	storeFallbackDir = pluginInstallDir
 )
 
-func getBillingStore(configuredDataDir string) (*billing.Store, error) {
+func getBillingStore() (*billing.Store, error) {
 	storeMu.Lock()
 	defer storeMu.Unlock()
-	// Tests may inject a store directly; keep that store until a path is
-	// explicitly configured.
-	if store != nil && storeDataDir == "" && strings.TrimSpace(configuredDataDir) == "" {
-		return store, storeErr
-	}
-	dataDir := billing.ResolveDataDir(configuredDataDir, pluginInstallDir())
-	if store != nil && storeDataDir == dataDir {
-		return store, storeErr
-	}
 	if store != nil {
-		_ = store.Close()
+		return store, storeErr
 	}
-	store, storeErr = billing.NewStore(dataDir)
+	dataDir := billing.ResolveDataDir("", storeFallbackDir())
+	return openBillingStore(dataDir, nil)
+}
+
+// configureBillingStore is only called under lifecycleMu's exclusive lock.
+// An empty configured directory explicitly selects the default directory.
+func configureBillingStore(configuredDataDir string, config []byte) (*billing.Store, error) {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	dataDir := billing.ResolveDataDir(configuredDataDir, storeFallbackDir())
+	if store != nil && storeDataDir == dataDir {
+		return store, store.ConfigureYAML(config)
+	}
+	return openBillingStore(dataDir, config)
+}
+
+// The caller holds storeMu. Open and configure the replacement before
+// publishing it; a failed configuration leaves the current store usable.
+func openBillingStore(dataDir string, config []byte) (*billing.Store, error) {
+	next, err := billing.NewStore(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := next.ConfigureYAML(config); err != nil {
+		_ = next.Close()
+		return nil, err
+	}
+	previous := store
+	store, storeErr = next, nil
 	storeDataDir = dataDir
-	return store, storeErr
+	if previous != nil {
+		_ = previous.Close()
+	}
+	return store, nil
 }
 
 func pluginInstallDir() string {

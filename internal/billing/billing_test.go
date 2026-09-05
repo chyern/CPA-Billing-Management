@@ -1,8 +1,6 @@
 package billing
 
 import (
-	"database/sql"
-	"encoding/json"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -159,59 +157,14 @@ func TestStoreUsesNormalizedSQLiteTables(t *testing.T) {
 			t.Fatalf("normalized table %s is missing", table)
 		}
 	}
-	var legacyCount int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'billing_state'`).Scan(&legacyCount); err != nil {
-		t.Fatal(err)
-	}
-	if legacyCount != 0 {
-		t.Fatal("new databases must not create the legacy JSON snapshot table")
-	}
 }
 
-func TestStoreDoesNotLoadLegacyJSONSnapshot(t *testing.T) {
-	dataDir := t.TempDir()
-	db, err := sql.Open("sqlite3", filepath.Join(dataDir, "billing.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`CREATE TABLE billing_state (id INTEGER PRIMARY KEY, state_json BLOB NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
-		t.Fatal(err)
-	}
-	legacyState := State{
-		Version: 3,
-		Rules:   []PriceRule{{Match: "legacy-model", InputPerMillion: 12}},
-		Events:  []UsageEvent{{Model: "legacy-model", TotalTokens: 100}},
-	}
-	raw, err := json.Marshal(legacyState)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO billing_state (id, state_json, updated_at) VALUES (1, ?, ?)`, raw, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	store, err := NewStore(dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if rules := store.Rules(); len(rules) != 0 {
-		t.Fatalf("runtime loaded legacy pricing rules: %+v", rules)
-	}
-	if summary := store.Summary(); summary.Totals.Requests != 0 || len(summary.RecentEvents) != 0 {
-		t.Fatalf("runtime loaded legacy usage data: %+v", summary)
-	}
-}
-
-func TestCalculateCostAndModelPriceFallback(t *testing.T) {
+func TestCalculateCostAndModelPrice(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetRules([]PriceRule{{Match: "codex/gpt-test", InputPerMillion: 2, OutputPerMillion: 4, CacheReadPerMillion: 0.5, CacheCreationPerMillion: 1}}); err != nil {
+	if err := store.SetRules([]PriceRule{{Match: "gpt-test", InputPerMillion: 2, OutputPerMillion: 4, CacheReadPerMillion: 0.5, CacheCreationPerMillion: 1}}); err != nil {
 		t.Fatal(err)
 	}
 	store.HandleUsage(UsageRecord{
@@ -221,7 +174,7 @@ func TestCalculateCostAndModelPriceFallback(t *testing.T) {
 	want := 750_000.0/1_000_000*2 + 500_000.0/1_000_000*4 + 200_000.0/1_000_000*0.5 + 50_000.0/1_000_000
 	summary := store.Summary()
 	if math.Abs(summary.Totals.Cost-want) > 1e-12 || len(summary.Models) != 1 || !summary.Models[0].Priced {
-		t.Fatalf("model-price fallback summary = %+v, want cost %v", summary, want)
+		t.Fatalf("model-price summary = %+v, want cost %v", summary, want)
 	}
 }
 
@@ -238,14 +191,12 @@ func TestModelPriceIgnoresProvider(t *testing.T) {
 		t.Fatalf("model-only price = %v, want 3", got)
 	}
 
-	// Existing provider/model entries are interpreted by their model segment;
-	// the event provider must not affect the selected price rule.
 	if err := store.SetRules([]PriceRule{{Match: "openai/gpt-test", InputPerMillion: 4}}); err != nil {
 		t.Fatal(err)
 	}
 	store.HandleUsage(UsageRecord{Provider: "codex", Model: "gpt-test", InputTokens: 1_000_000})
 	if got := store.Summary().Totals.Cost; got != 7 {
-		t.Fatalf("provider-independent legacy spelling cost = %v, want 7", got)
+		t.Fatalf("provider/model rule should match its model segment, cost = %v, want 7", got)
 	}
 }
 

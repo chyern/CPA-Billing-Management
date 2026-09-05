@@ -62,6 +62,7 @@ type UsageEvent struct {
 	TotalTokens         int64     `json:"total_tokens"`
 	Cost                float64   `json:"cost"`
 	PricedBy            string    `json:"priced_by,omitempty"`
+	Priced              bool      `json:"priced"`
 }
 
 type Aggregate struct {

@@ -23,13 +23,7 @@ func TestRegistrationUsesBuildVersion(t *testing.T) {
 }
 
 func TestPluginBillingFlow(t *testing.T) {
-	var err error
-	store, err = billing.NewStore(filepath.Join(t.TempDir(), "data"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	storeErr = nil
-
+	isolatePluginStore(t)
 	registerRaw, err := handleMethod(abi.MethodPluginRegister, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -708,16 +702,15 @@ func TestKeyBalanceManagementAndResource(t *testing.T) {
 	key := "sk-management-balance"
 	id := billing.APIKeyIdentifier(key)
 	body, _ := json.Marshal(map[string]any{
-		"balances": []billing.APIKeyBalance{{APIKeyID: id, APIKey: key, Balance: 12}},
-		"notes":    []billing.APIKeyBalance{{APIKeyID: id, APIKey: key, Note: "生产调用"}},
+		"updates": []map[string]any{{"api_key_id": id, "api_key": key, "balance": 12, "note": "生产调用", "expected_balance_version": ""}},
 	})
-	putReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodPut, Path: "/v0/management/cpa-billing-management/key-balances", Body: body})
-	putRaw, err := handleManagement(store, putReq)
+	patchReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodPatch, Path: "/v0/management/cpa-billing-management/key-balances", Body: body})
+	patchRaw, err := handleManagement(store, patchReq)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := managementStatus(t, putRaw); got != http.StatusOK {
-		t.Fatalf("key balance PUT status = %d", got)
+	if got := managementStatus(t, patchRaw); got != http.StatusOK {
+		t.Fatalf("key balance PATCH status = %d", got)
 	}
 	store.HandleUsage(billing.UsageRecord{APIKey: key, Model: "upstream-priced", Cost: 3, CostProvided: true})
 	getReq, _ := json.Marshal(abi.ManagementRequest{Method: http.MethodGet, Path: "/v0/management/cpa-billing-management/key-balances"})

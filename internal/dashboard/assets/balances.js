@@ -2,6 +2,7 @@ const BALANCES_API = '/v0/management/cpa-billing-management/key-balances';
 const t = value => typeof window.cpaTranslate === 'function' ? window.cpaTranslate(value) : value;
 let balances = [];
 let currency = 'USD';
+let balanceLoadSequence = 0;
 
 const escapeHTML = value => String(value ?? '').replace(
   /[&<>"']/g,
@@ -75,10 +76,10 @@ function fallbackCopy(text) {
   document.body.appendChild(textarea);
   textarea.select();
   try {
-    document.execCommand('copy');
+    if (!document.execCommand('copy')) throw new Error('copy failed');
     showToast(t('已复制'));
   } catch (_) {
-    showToast('复制失败', true);
+    showToast(t('复制失败'), true);
   }
   document.body.removeChild(textarea);
 }
@@ -108,6 +109,7 @@ async function requestJSON(url, options = {}) {
     redirectToManagementLogin();
     throw new Error('管理中心登录已失效');
   }
+  if (response.status === 409) throw new Error(t('余额已发生变化，请刷新页面后重试'));
   if (!response.ok) throw new Error(await response.text() || response.statusText);
   return response.json();
 }
@@ -183,12 +185,13 @@ function renderBalances() {
         ? '<span class="pill success">正常</span>'
         : '<span class="pill danger">已耗尽</span>';
     }
-    const value = item.configured ? Number(item.balance || 0) : '';
+    const value = item._draftBalance !== undefined ? item._draftBalance : (item.configured ? Number(item.balance || 0) : '');
+    const noteValue = item._draftNote !== undefined ? item._draftNote : (item.note || '');
     return '<tr data-id="' + itemID + '"><td>' + keyCell + '</td>'
-      + '<td><input class="note-input" data-id="' + itemID + '" type="text" maxlength="200" placeholder="填写密钥用途" value="' + escapeHTML(item.note || '') + '"></td>'
+      + '<td><input class="note-input" data-id="' + itemID + '" type="text" maxlength="200" placeholder="填写密钥用途" value="' + escapeHTML(noteValue) + '"></td>'
       + '<td class="num">' + Number(item.requests || 0).toLocaleString('zh-CN') + '</td>'
       + '<td class="num">' + formatMoney(item.cost) + '</td>'
-      + '<td class="num balance-cell"><input class="balance-input" data-id="' + itemID + '" type="number" min="0" step="0.000001" placeholder="不跟踪" value="' + value + '"></td>'
+      + '<td class="num balance-cell"><input class="balance-input" data-id="' + itemID + '" type="number" min="0" step="0.000001" placeholder="不跟踪" value="' + escapeHTML(value) + '"></td>'
       + '<td class="status-cell">' + status + '</td>'
       + '<td class="actions-cell"><button class="btn primary btn-sm row-save" data-id="' + itemID + '">保存</button><button class="btn danger btn-sm row-delete" data-id="' + itemID + '"' + (item.pending ? ' disabled' : '') + '>删除</button></td></tr>';
   }).join('');
@@ -218,23 +221,19 @@ async function configuredAPIKeys() {
   return Array.isArray(config && config['api-keys']) ? config['api-keys'].map(key => String(key).trim()).filter(Boolean) : [];
 }
 
-async function persistPluginState(items = balances) {
-  const configured = items.filter(item => !item.pending && item.configured && Number.isFinite(Number(item.balance)) && Number(item.balance) >= 0).map(item => ({
-    api_key_id: item.api_key_id,
-    caller_scope: item.caller_scope || '',
-    api_key: item.api_key || '',
-    balance: Number(item.balance),
-  }));
-  const notes = items.filter(item => !item.pending).map(item => ({
-    api_key_id: item.api_key_id,
-    api_key: item.api_key || '',
-    note: item.note || '',
-  }));
-  await requestJSON(BALANCES_API, {method: 'PUT', body: JSON.stringify({balances: configured, notes})});
+async function patchBalance(update) {
+  return requestJSON(BALANCES_API, {method: 'PATCH', body: JSON.stringify({updates: [update]})});
 }
 
 async function loadBalances() {
+  const sequence = ++balanceLoadSequence;
   const [data, hostKeys] = await Promise.all([requestJSON(BALANCES_API), configuredKeys()]);
+  if (sequence !== balanceLoadSequence) return;
+  // Read drafts after the requests settle: typing while loading must survive.
+  const pending = balances.filter(item => item.pending);
+  const drafts = new Map(balances.map(item => [item.api_key_id, {
+    note: item._draftNote, balance: item._draftBalance, version: item._expectedBalanceVersion,
+  }]));
   currency = data.currency || 'USD';
   document.getElementById('currency').textContent = currency;
   const savedByID = new Map((data.balances || []).map(item => [String(item.api_key_id || ''), item]));
@@ -243,41 +242,53 @@ async function loadBalances() {
     if (seen.has(key.api_key_id)) return false;
     seen.add(key.api_key_id);
     return true;
-  }).map(key => Object.assign(
-    {balance: 0, configured: false, requests: 0, cost: 0, note: ''},
-    savedByID.get(key.api_key_id) || {},
-    key,
-  ));
+  }).map(key => {
+    const item = Object.assign({balance: 0, configured: false, requests: 0, cost: 0, note: ''}, savedByID.get(key.api_key_id) || {}, key);
+    const draft = drafts.get(key.api_key_id);
+    if (draft) Object.assign(item, {_draftNote: draft.note, _draftBalance: draft.balance, _expectedBalanceVersion: draft.version});
+    return item;
+  }).concat(pending);
   renderBalances();
   showStatus('已更新');
 }
 
-async function saveBalances() {
+function clearSavedDrafts(itemID, savedNote, savedBalance) {
+  const item = balances.find(candidate => candidate.api_key_id === itemID);
+  if (!item) return;
+  if (item._draftNote === savedNote) delete item._draftNote;
+  if (item._draftBalance === savedBalance) {
+    delete item._draftBalance;
+    delete item._expectedBalanceVersion;
+  }
+}
+
+async function saveBalances(targetID) {
   try {
-    const configured = [];
-    const notes = [];
-    document.querySelectorAll('.balance-input').forEach(input => {
-      const value = input.value.trim();
-      if (value === '') return;
+    const item = balances.find(candidate => candidate.api_key_id === targetID);
+    if (!item) return;
+    const noteInput = document.querySelector('.note-input[data-id="' + targetID + '"]');
+    const balanceInput = document.querySelector('.balance-input[data-id="' + targetID + '"]');
+    const note = (noteInput ? noteInput.value : (item._draftNote !== undefined ? item._draftNote : item.note || '')).trim();
+    const value = String(balanceInput ? balanceInput.value : (item._draftBalance !== undefined ? item._draftBalance : item.configured ? item.balance : '')).trim();
+    const update = {api_key_id: item.api_key_id, api_key: item.api_key || '', caller_scope: item.caller_scope || ''};
+    let changed = false;
+    if (note !== (item.note || '')) { update.note = note; changed = true; }
+    if (value === '') {
+      if (item.configured) { update.configured = false; update.expected_balance_version = item._expectedBalanceVersion !== undefined ? item._expectedBalanceVersion : (item.balance_version || ''); changed = true; }
+    } else {
       const balance = Number(value);
-      if (!Number.isFinite(balance) || balance < 0) throw new Error('余额必须是大于等于 0 的有效数字');
-      const item = balances.find(candidate => candidate.api_key_id === input.dataset.id);
-      configured.push({
-        api_key_id: input.dataset.id,
-        caller_scope: item && item.caller_scope || '',
-        api_key: item && item.api_key || '',
-        balance,
-      });
-    });
-    document.querySelectorAll('.note-input').forEach(input => {
-      const item = balances.find(candidate => candidate.api_key_id === input.dataset.id);
-      notes.push({
-        api_key_id: input.dataset.id,
-        api_key: item && item.api_key || '',
-        note: input.value.trim(),
-      });
-    });
-    await requestJSON(BALANCES_API, {method: 'PUT', body: JSON.stringify({balances: configured, notes})});
+      if (!item.configured || balance !== Number(item.balance)) {
+        if (!Number.isFinite(balance) || balance < 0) throw new Error('余额必须是大于等于 0 的有效数字');
+        update.balance = balance;
+        update.expected_balance_version = item._expectedBalanceVersion !== undefined ? item._expectedBalanceVersion : (item.balance_version || '');
+        changed = true;
+      }
+    }
+    if (!changed) return showStatus('没有需要保存的更改');
+    const savedNote = item._draftNote;
+    const savedBalance = item._draftBalance;
+    await patchBalance(update);
+    clearSavedDrafts(targetID, savedNote, savedBalance);
     await loadBalances();
     showStatus('密钥余额已保存，余额耗尽后新请求将被拦截');
   } catch (error) {
@@ -312,7 +323,7 @@ async function deleteAPIKey(item) {
       throw new Error('管理中心登录已失效');
     }
     if (!response.ok) throw new Error(await response.text() || response.statusText);
-    await persistPluginState(balances.filter(candidate => candidate.api_key_id !== item.api_key_id));
+    await patchBalance({api_key_id: item.api_key_id, delete: true, expected_balance_version: item.balance_version || ''});
     await loadBalances();
     showStatus('API Key 已从 CLIProxyAPI 主配置删除');
   } catch (error) {
@@ -327,6 +338,8 @@ async function savePendingAPIKey(item) {
   const value = keyInput && keyInput.value.trim();
   if (!value) throw new Error('请输入完整 API Key');
   const balanceValue = balanceInput ? balanceInput.value.trim() : '';
+  const savedNote = item._draftNote;
+  const savedBalance = item._draftBalance;
   const balance = balanceValue === '' ? 0 : Number(balanceValue);
   if (!Number.isFinite(balance) || balance < 0) throw new Error('余额必须是大于等于 0 的有效数字');
   const configured = await configuredAPIKeys();
@@ -341,7 +354,13 @@ async function savePendingAPIKey(item) {
   item.note = noteInput ? noteInput.value.trim() : '';
   item.configured = balanceValue !== '';
   item.balance = balance;
-  await persistPluginState(balances);
+  item.balance_version = '';
+  const update = {api_key_id: item.api_key_id, api_key: item.api_key, caller_scope: item.caller_scope};
+  if (balanceValue !== '') update.balance = balance;
+  if (item.note) update.note = item.note;
+  if (balanceValue !== '') update.expected_balance_version = '';
+  await patchBalance(update);
+  clearSavedDrafts(item.api_key_id, savedNote, savedBalance);
   await loadBalances();
   showStatus('API Key 已添加到 CLIProxyAPI 主配置');
 }
@@ -367,7 +386,19 @@ document.getElementById('balances').addEventListener('click', async event => {
     }
     return;
   }
-  await saveBalances();
+  await saveBalances(id);
+});
+
+document.getElementById('balances').addEventListener('input', event => {
+  const input = event.target.closest('.note-input, .balance-input, .new-key-input');
+  if (!input) return;
+  const item = balances.find(candidate => candidate.api_key_id === input.dataset.id);
+  if (!item) return;
+  if (input.classList.contains('note-input')) item._draftNote = input.value;
+  else if (input.classList.contains('balance-input')) {
+    if (item._expectedBalanceVersion === undefined) item._expectedBalanceVersion = item.balance_version || '';
+    item._draftBalance = input.value;
+  } else item.api_key_value = input.value;
 });
 
 document.addEventListener('click', event => {

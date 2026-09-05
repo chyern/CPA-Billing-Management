@@ -171,15 +171,18 @@ function mergeCatalogIntoRules() {
 }
 
 function readRules() {
-  document.querySelectorAll('#rules tbody tr').forEach(row => {
-    const index = Number(row.dataset.i);
-    row.querySelectorAll('input').forEach(input => {
-      const key = input.dataset.k;
-      const value = input.value.trim();
-      rules[index][key] = key === 'match' ? value : (value === '' ? NaN : Number(value));
-    });
-    delete rules[index]._draft;
+  document.querySelectorAll('#rules tbody tr').forEach(readRuleRow);
+}
+
+function readRuleRow(row) {
+  const rule = rules[Number(row.dataset.i)];
+  if (!rule) return;
+  row.querySelectorAll('input').forEach(input => {
+    const key = input.dataset.k;
+    const value = input.value.trim();
+    rule[key] = key === 'match' ? value : (value === '' ? NaN : Number(value));
   });
+  delete rule._draft;
 }
 
 function showToast(message, isError = false) {
@@ -328,6 +331,9 @@ document.getElementById('rules').addEventListener('input', event => {
   if (!row) return;
   const index = Number(row.dataset.i);
   if (!rules[index]) return;
+  // Model discovery may re-render the editor while the user is typing. Keep
+  // every field (including empty draft fields) in state before that happens.
+  readRuleRow(row);
   rules[index]._dirty = true;
   const saveButton = row.querySelector('[data-action="save-row"]');
   if (saveButton) saveButton.disabled = false;
@@ -449,7 +455,10 @@ document.getElementById('save').onclick = async () => {
 renderRules();
 renderCatalog();
 requestPricing().then(data => {
-  rules = normalizeRules(data.rules || []);
+  // The initial refresh can also finish after the user starts editing.
+  if (!rules.some(rule => rule._dirty || rule._draft)) {
+    rules = normalizeRules(data.rules || []);
+  }
   catalogModels = data.models || catalogModels;
   if (Array.isArray(data.pricing_sources) && data.pricing_sources.length > 0) {
     const selected = syncSource.value || data.default_source;

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -32,7 +33,15 @@ func handleManagement(store *billing.Store, raw []byte) ([]byte, error) {
 		if err != nil {
 			return jsonManagementError(http.StatusBadRequest, err.Error())
 		}
-		return jsonManagementResponse(store.SummaryPageRange(int(page), int(pageSize), start, end))
+		eventStatus := queryValue(req.Query, "event_status")
+		if eventStatus != "" && eventStatus != "all" && eventStatus != "success" && eventStatus != "failed" {
+			return jsonManagementError(http.StatusBadRequest, "invalid event_status: use all, success, or failed")
+		}
+		summary, err := store.SummaryPageRangeStatus(int(page), int(pageSize), start, end, eventStatus)
+		if err != nil {
+			return jsonManagementError(http.StatusInternalServerError, err.Error())
+		}
+		return jsonManagementResponse(summary)
 	case req.Method == http.MethodGet && strings.HasSuffix(path, "/prices"):
 		return pricingSnapshotResponse(store)
 	case req.Method == http.MethodPost && strings.HasSuffix(path, "/prices/sync"):
@@ -41,8 +50,8 @@ func handleManagement(store *billing.Store, raw []byte) ([]byte, error) {
 		return handlePricingUpdate(store, req.Body)
 	case req.Method == http.MethodGet && strings.HasSuffix(path, "/key-balances"):
 		return keyBalancesResponse(store)
-	case req.Method == http.MethodPut && strings.HasSuffix(path, "/key-balances"):
-		return handleKeyBalancesUpdate(store, req.Body)
+	case req.Method == http.MethodPatch && strings.HasSuffix(path, "/key-balances"):
+		return handleKeyBalancesPatch(store, req.Body)
 	case req.Method == http.MethodPost && strings.HasSuffix(path, "/reset"):
 		if err := store.Reset(); err != nil {
 			return jsonManagementError(http.StatusInternalServerError, err.Error())
@@ -61,21 +70,18 @@ func keyBalancesResponse(store *billing.Store) ([]byte, error) {
 	return jsonManagementResponse(map[string]any{"currency": store.Currency(), "balances": balances})
 }
 
-func handleKeyBalancesUpdate(store *billing.Store, body []byte) ([]byte, error) {
+func handleKeyBalancesPatch(store *billing.Store, body []byte) ([]byte, error) {
 	var payload struct {
-		Balances []billing.APIKeyBalance  `json:"balances"`
-		Notes    *[]billing.APIKeyBalance `json:"notes"`
+		Updates []billing.APIKeyBalanceUpdate `json:"updates"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return jsonManagementError(http.StatusBadRequest, err.Error())
 	}
-	if err := store.SetKeyBalances(payload.Balances); err != nil {
-		return jsonManagementError(http.StatusBadRequest, err.Error())
-	}
-	if payload.Notes != nil {
-		if err := store.SetKeyBalanceNotes(*payload.Notes); err != nil {
-			return jsonManagementError(http.StatusBadRequest, err.Error())
+	if err := store.PatchKeyBalances(payload.Updates); err != nil {
+		if errors.Is(err, billing.ErrBalanceConflict) {
+			return jsonManagementError(http.StatusConflict, err.Error())
 		}
+		return jsonManagementError(http.StatusBadRequest, err.Error())
 	}
 	return keyBalancesResponse(store)
 }

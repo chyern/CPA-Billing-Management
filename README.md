@@ -9,7 +9,7 @@ CLIProxyAPI 自定义插件：接收 usage 事件，优先使用上游金额，�
 - 上游未返回金额时，按输入、输出、缓存读取和缓存创建 token 以及模型价格规则估算费用；
 - 费用在 usage 事件写入时计算并固化，后续修改模型价格只影响新事件，不会联动修改历史费用；
 - 支持模型名、alias 和 `*` 通配价格规则；
-- 使用结构化 SQLite 表持久化设置、价格规则、usage 事件、按模型汇总和按 API Key 汇总；数据库文件为数据目录下的 `billing.db`，默认目录是操作系统用户配置目录下的 `cliproxyapi/cpa-billing-management`；
+- 使用结构化 SQLite 表持久化设置、价格规则、usage 事件、按模型汇总和按 API Key 汇总；数据库文件为数据目录下的 `billing.db`，默认目录是插件动态库所在的安装目录；
 - 在 CLIProxyAPI 管理页增加“费用统计”菜单，展示总费用、按模型汇总、按脱敏 API Key 汇总，以及最近请求的总耗时和首 Token 耗时；最近事件支持分页和可选的 5/10/15 秒自动刷新；
 - 在独立的“模型费用”页面编辑价格规则；费用页只列出 CLIProxyAPI `/v1/models` 当前暴露的模型，没有匹配价格规则的模型默认显示为 0，并标记为“未配置模型费用”。同步价格时先获取本地与上游的差异，确认后再保存，避免一次拉取直接覆盖人工调整。
 - 模型费用页会将 CLIProxyAPI 当前暴露的模型加入编辑器作为零价占位（已有规则和通配规则保持不变）；支持按需从 [LiteLLM 公共模型价格目录](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)、[Models.dev](https://models.dev/) 或 [OpenRouter Models API](https://openrouter.ai/docs/api-reference/list-available-models) 同步价格，未识别的模型仍可手动配置。
@@ -32,7 +32,7 @@ CLIProxyAPI 自定义插件：接收 usage 事件，优先使用上游金额，�
 
 ## 构建
 
-需要 Go 1.26、CGO 和本机 C 编译器：
+需要 Go 1.26、CGO 和本机 C 编译器；`make test` 还需要 Node.js 24 来运行页面回归测试：
 
 ```bash
 make test
@@ -84,6 +84,7 @@ plugins:
 ```
 
 `cpa_billing_data_dir` 可直接在 CPA 管理页的插件配置中填写；留空时使用插件动态库所在的安装目录。
+目录配置会一直用于后续请求，直到再次修改配置；清空该配置会切回默认目录。若新目录无法打开，插件保留原有可用存储并返回错误。
 
 ### 本地目录安装（开发/快速更新）
 
@@ -104,10 +105,16 @@ make install-local \\
 - `PUT /v0/management/cpa-billing-management/prices`
 - `POST /v0/management/cpa-billing-management/prices/sync`
 - `GET /v0/management/cpa-billing-management/key-balances`
-- `PUT /v0/management/cpa-billing-management/key-balances`
+- `PATCH /v0/management/cpa-billing-management/key-balances`（按单个 Key 增量更新；余额变更带版本校验）
 - `POST /v0/management/cpa-billing-management/reset`
 
 `POST /v0/management/cpa-billing-management/prices/sync` 默认使用 LiteLLM；模型费用页面可选择 LiteLLM、Models.dev 或 OpenRouter，并通过 `source=litellm`、`source=models.dev` 或 `source=openrouter` 查询参数指定来源。接口必须传入 `preview=1`，只返回拟新增/拟更新规则，不写入数据库；用户确认后通过已有的 `PUT /prices` 保存。同步只下载公开价格目录，不会上传本地账单数据；不同来源的价格单位会统一转换为当前币种/每百万 token。
+
+新接收的账单事件会完整保存在 SQLite 中；启动时内存只加载最近 10,000 条。`GET /summary` 支持 `start`、`end`、`page`、`page_size` 及 `event_status=all|success|failed`；状态只筛选最近事件及其分页数量，顶部汇总仍使用整个日期范围。无日期条件时使用累计聚合，带日期条件时从历史明细汇总。修改价格规则不会重写历史事件。
+
+数据库只支持当前 SQLite schema；schema 不匹配时不会自动迁移旧表或旧快照，需要配置新的数据目录。
+
+余额、备注均持久化保存；每笔 usage 的事件、累计费用和余额扣减在同一个事务中写入，写入失败会返回 `accepted: false`。余额页使用 `PATCH /key-balances` 的 `updates` 数组，只提交当前行修改过的字段。修改 `balance`、设置 `configured: false`（取消跟踪）或 `delete: true` 时需携带 GET 返回的 `balance_version`，放在 `expected_balance_version` 中；版本冲突返回 HTTP 409。备注 `note` 可独立修改，不会覆盖并发扣费。
 
 插件资源页面为：
 
@@ -122,7 +129,7 @@ make install-local \\
 `/v0/resource/plugins/cpa-billing-management/wallet`
 
 资源页面会复用 CLIProxyAPI 管理中心的浏览器登录状态：从同源 `localStorage` 的
-`cli-proxy-auth` 读取管理密钥，兼容管理中心的 `enc::v1::` 混淆格式，并通过
+`cli-proxy-auth` 读取管理密钥，并通过
 `Authorization: Bearer <management-key>` 调用插件管理 API。管理中心勾选“记住密码”后，
 重新打开资源页会自动恢复；管理密钥缺失或 API 返回 401 时，页面会跳转到
 `/management.html#/login`。插件不再在配置或资源 HTML 中注入第二份管理密钥。

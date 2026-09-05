@@ -7,6 +7,9 @@ import (
 )
 
 func (s *Store) withTransaction(operation func(*sql.Tx) error) error {
+	if s.db == nil {
+		return fmt.Errorf("billing database is closed")
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin billing transaction: %w", err)
@@ -21,22 +24,30 @@ func (s *Store) withTransaction(operation func(*sql.Tx) error) error {
 	return nil
 }
 
-func (s *Store) touchStateLocked() { s.state.UpdatedAt = time.Now().UTC() }
-
-func (s *Store) persistSettingsLocked() error {
-	s.touchStateLocked()
-	return s.withTransaction(func(tx *sql.Tx) error { return writeSettings(tx, s.state) })
+func (s *Store) persistSettingsLocked(next State) error {
+	next.UpdatedAt = time.Now().UTC()
+	if err := s.withTransaction(func(tx *sql.Tx) error { return writeSettings(tx, next) }); err != nil {
+		return err
+	}
+	s.state.UpdatedAt = next.UpdatedAt
+	return nil
 }
 
 func (s *Store) persistFullStateLocked() error {
-	s.touchStateLocked()
-	return s.withTransaction(func(tx *sql.Tx) error { return replaceState(tx, s.state) })
+	next := s.state
+	next.UpdatedAt = time.Now().UTC()
+	if err := s.withTransaction(func(tx *sql.Tx) error { return replaceState(tx, next) }); err != nil {
+		return err
+	}
+	s.state.UpdatedAt = next.UpdatedAt
+	return nil
 }
 
 func (s *Store) persistResetLocked() error {
-	s.touchStateLocked()
-	return s.withTransaction(func(tx *sql.Tx) error {
-		if err := writeSettings(tx, s.state); err != nil {
+	next := s.state
+	next.UpdatedAt = time.Now().UTC()
+	if err := s.withTransaction(func(tx *sql.Tx) error {
+		if err := writeSettings(tx, next); err != nil {
 			return err
 		}
 		for _, table := range []string{"usage_events", "model_aggregates", "api_key_aggregates"} {
@@ -45,34 +56,59 @@ func (s *Store) persistResetLocked() error {
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	s.state.UpdatedAt = next.UpdatedAt
+	return nil
 }
 
-func (s *Store) persistUsageLocked(event UsageEvent, modelKey, apiKey string) error {
-	s.touchStateLocked()
+func (s *Store) persistUsageLocked(event UsageEvent, next State, modelKey string, modelAgg *Aggregate, apiAgg *APIKeyAggregate) error {
 	return s.withTransaction(func(tx *sql.Tx) error {
-		if err := writeSettings(tx, s.state); err != nil {
+		if err := writeSettings(tx, next); err != nil {
 			return err
 		}
 		if err := insertEvent(tx, event); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`DELETE FROM usage_events WHERE id NOT IN (SELECT id FROM usage_events ORDER BY id DESC LIMIT ?)`, maxPersistedEvents); err != nil {
-			return fmt.Errorf("trim usage events: %w", err)
-		}
-		if err := upsertModelAggregate(tx, modelKey, s.state.Aggregates[modelKey]); err != nil {
+		if err := upsertModelAggregate(tx, modelKey, modelAgg); err != nil {
 			return err
 		}
-		if err := upsertAPIKeyAggregate(tx, apiKey, s.state.APIKeyAggregates[apiKey]); err != nil {
+		if err := upsertAPIKeyAggregate(tx, event.APIKeyID, apiAgg); err != nil {
 			return err
 		}
-		if event.Cost > 0 && apiKey != "" {
-			if _, err := tx.Exec(`UPDATE api_key_balances SET balance = balance - ?, updated_at = ? WHERE api_key_id = ?`, event.Cost, s.state.UpdatedAt.Format(time.RFC3339Nano), apiKey); err != nil {
-				return fmt.Errorf("decrement API key balance %q: %w", apiKey, err)
+		if event.Cost > 0 && event.APIKeyID != "" {
+			if _, err := tx.Exec(`UPDATE api_key_balances SET balance = balance - ?, updated_at = ? WHERE api_key_id = ?`, event.Cost, next.UpdatedAt.Format(time.RFC3339Nano), event.APIKeyID); err != nil {
+				return fmt.Errorf("decrement API key balance %q: %w", event.APIKeyID, err)
 			}
 		}
 		return nil
 	})
+}
+
+func (s *Store) persistRulesLocked(rules []PriceRule) error {
+	next := s.state
+	next.Rules = append([]PriceRule(nil), rules...)
+	next.UpdatedAt = time.Now().UTC()
+	if err := s.withTransaction(func(tx *sql.Tx) error {
+		if err := writeSettings(tx, next); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM pricing_rules`); err != nil {
+			return fmt.Errorf("clear pricing rules: %w", err)
+		}
+		for i, r := range rules {
+			if _, err := tx.Exec(`INSERT INTO pricing_rules (position, match, input_per_million, output_per_million, cache_read_per_million, cache_creation_per_million) VALUES (?, ?, ?, ?, ?, ?)`, i, r.Match, r.InputPerMillion, r.OutputPerMillion, r.CacheReadPerMillion, r.CacheCreationPerMillion); err != nil {
+				return fmt.Errorf("insert pricing rule %q: %w", r.Match, err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	s.state.Rules = append([]PriceRule(nil), rules...)
+	s.state.UpdatedAt = next.UpdatedAt
+	return nil
 }
 
 // ReplaceState atomically replaces all rows in the normalized billing schema.
@@ -141,9 +177,9 @@ func insertEvent(tx *sql.Tx, event UsageEvent) error {
 		INSERT INTO usage_events (
 			requested_at, provider, model, alias, api_key, api_key_id, auth_type, source,
 			latency_ns, ttft_ns, failed, input_tokens, output_tokens, reasoning_tokens,
-			cached_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, cost, priced_by
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, event.RequestedAt.Format(time.RFC3339Nano), event.Provider, event.Model, event.Alias, event.APIKey, event.APIKeyID, event.AuthType, event.Source, event.LatencyNanos, event.TTFTNanos, event.Failed, event.InputTokens, event.OutputTokens, event.ReasoningTokens, event.CachedTokens, event.CacheReadTokens, event.CacheCreationTokens, event.TotalTokens, event.Cost, event.PricedBy)
+			cached_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, cost, priced_by, priced
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, event.RequestedAt.Format(time.RFC3339Nano), event.Provider, event.Model, event.Alias, event.APIKey, event.APIKeyID, event.AuthType, event.Source, event.LatencyNanos, event.TTFTNanos, event.Failed, event.InputTokens, event.OutputTokens, event.ReasoningTokens, event.CachedTokens, event.CacheReadTokens, event.CacheCreationTokens, event.TotalTokens, event.Cost, event.PricedBy, event.Priced)
 	if err != nil {
 		return fmt.Errorf("insert usage event: %w", err)
 	}

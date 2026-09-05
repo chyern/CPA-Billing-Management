@@ -23,8 +23,6 @@ func CalculateCost(record UsageRecord, rule PriceRule) float64 {
 
 func (s *Store) matchRule(record UsageRecord) (PriceRule, bool) {
 	// 价格规则只按模型名匹配，provider 仅用于统计维度，不参与计费。
-	// 规则表中如果仍有 provider/model 形式，取最后一个斜杠后的模型名，
-	// 这样不会因为上游 provider 与 CLIProxyAPI 的 owned_by 不一致而漏计费。
 	model := strings.TrimSpace(record.Model)
 	keys := []string{model, strings.TrimSpace(record.Alias), "*"}
 	for _, key := range keys {
@@ -75,8 +73,7 @@ func (s *Store) SetRules(rules []PriceRule) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.state.Rules = append([]PriceRule{}, rules...)
-	if err := s.persistFullStateLocked(); err != nil {
+	if err := s.persistRulesLocked(rules); err != nil {
 		s.lastErr = err
 		return err
 	}

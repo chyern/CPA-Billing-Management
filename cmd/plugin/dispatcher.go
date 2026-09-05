@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/chyern/CPA-Billing-Management/internal/abi"
@@ -10,11 +11,14 @@ import (
 // handleMethod is the application-level dispatcher behind the C ABI adapter.
 // Each protocol capability delegates to its own handler module.
 func handleMethod(method string, request []byte) ([]byte, error) {
-	switch method {
-	case abi.MethodPluginRegister, abi.MethodPluginReconfigure:
+	if method == abi.MethodPluginRegister || method == abi.MethodPluginReconfigure {
 		return handleLifecycle(request)
+	}
+	lifecycleMu.RLock()
+	defer lifecycleMu.RUnlock()
+	switch method {
 	case abi.MethodUsageHandle:
-		billingStore, err := getBillingStore("")
+		billingStore, err := getBillingStore()
 		if err != nil {
 			return nil, err
 		}
@@ -23,7 +27,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		}
 		return okEnvelope(map[string]any{"accepted": true})
 	case abi.MethodRequestInterceptBefore:
-		billingStore, err := getBillingStore("")
+		billingStore, err := getBillingStore()
 		if err != nil {
 			return nil, err
 		}
@@ -33,7 +37,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case abi.MethodManagementRegister:
 		return okEnvelope(managementRegistration())
 	case abi.MethodManagementHandle:
-		billingStore, err := getBillingStore("")
+		billingStore, err := getBillingStore()
 		if err != nil {
 			return nil, err
 		}
@@ -44,17 +48,16 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 }
 
 func handleLifecycle(request []byte) ([]byte, error) {
+	lifecycleMu.Lock()
+	defer lifecycleMu.Unlock()
 	var lifecycle abi.LifecycleRequest
-	dataDir := ""
-	if len(request) > 0 && json.Unmarshal(request, &lifecycle) == nil {
-		dataDir = configuredDataDir(lifecycle.ConfigYAML)
-	}
-	billingStore, err := getBillingStore(dataDir)
-	if err != nil {
-		return nil, err
-	}
 	if len(request) > 0 {
-		billingStore.ConfigureYAML(lifecycle.ConfigYAML)
+		if err := json.Unmarshal(request, &lifecycle); err != nil {
+			return nil, fmt.Errorf("decode lifecycle request: %w", err)
+		}
+	}
+	if _, err := configureBillingStore(configuredDataDir(lifecycle.ConfigYAML), lifecycle.ConfigYAML); err != nil {
+		return nil, err
 	}
 	return okEnvelope(registration())
 }
@@ -89,7 +92,7 @@ func managementRegistration() abi.ManagementRegistrationResponse {
 			{Method: http.MethodPut, Path: "/cpa-billing-management/prices"},
 			{Method: http.MethodPost, Path: "/cpa-billing-management/prices/sync"},
 			{Method: http.MethodGet, Path: "/cpa-billing-management/key-balances"},
-			{Method: http.MethodPut, Path: "/cpa-billing-management/key-balances"},
+			{Method: http.MethodPatch, Path: "/cpa-billing-management/key-balances"},
 			{Method: http.MethodPost, Path: "/cpa-billing-management/reset"},
 		},
 	}

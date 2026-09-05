@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	stateVersion       = 4
-	maxPersistedEvents = 10000
-	defaultCurrency    = "USD"
+	stateVersion    = 4
+	maxCachedEvents = 10000
+	defaultCurrency = "USD"
 )
 
 func DefaultRules() []PriceRule {
@@ -82,13 +82,13 @@ func (s *Store) databasePath() string { return filepath.Join(s.dataDir, "billing
 func (s *Store) Reset() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.state.Events = nil
-	s.state.Aggregates = map[string]*Aggregate{}
-	s.state.APIKeyAggregates = map[string]*APIKeyAggregate{}
 	if err := s.persistResetLocked(); err != nil {
 		s.lastErr = err
 		return err
 	}
+	s.state.Events = nil
+	s.state.Aggregates = map[string]*Aggregate{}
+	s.state.APIKeyAggregates = map[string]*APIKeyAggregate{}
 	return nil
 }
 
@@ -98,7 +98,7 @@ func (s *Store) Currency() string {
 	return s.state.Currency
 }
 
-func (s *Store) ConfigureYAML(raw []byte) {
+func (s *Store) ConfigureYAML(raw []byte) error {
 	// The host sends plugin configuration as YAML. Pricing rules stay editable
 	// through the model-cost page and are persisted in the SQLite database.
 	var currency string
@@ -111,11 +111,15 @@ func (s *Store) ConfigureYAML(raw []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if currency != "" {
-		s.state.Currency = currency
-		if err := s.persistSettingsLocked(); err != nil {
+		next := s.state
+		next.Currency = currency
+		if err := s.persistSettingsLocked(next); err != nil {
 			s.lastErr = err
+			return err
 		}
+		s.state.Currency = currency
 	}
+	return nil
 }
 
 func (s *Store) LastError() string {

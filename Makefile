@@ -1,6 +1,7 @@
 PLUGIN_ID := cpa-billing-management
 BIN_DIR := bin
 GO ?= go
+NODE ?= node
 CC ?= cc
 UNAME_S := $(shell uname -s)
 
@@ -21,6 +22,7 @@ GO_LDFLAGS := -X main.pluginVersion=$(PLUGIN_VERSION)
 
 test:
 	$(GO) test ./...
+	$(NODE) --test tests/*.test.cjs
 
 build:
 	mkdir -p $(BIN_DIR)

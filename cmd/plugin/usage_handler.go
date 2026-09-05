@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -19,14 +20,19 @@ func handleUsage(store *billing.Store, raw []byte) error {
 	if !ok {
 		return fmt.Errorf("usage request must be an object")
 	}
+	if _, exists := lookup(object, "ActualCost"); exists {
+		cost, valid := floatValue(object, "ActualCost")
+		if !valid || math.IsNaN(cost) || math.IsInf(cost, 0) {
+			return fmt.Errorf("ActualCost must be a finite number")
+		}
+	}
 	record := usageRecordFromObject(object)
 	if requestedAt := stringValue(object, "RequestedAt"); requestedAt != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, requestedAt); err == nil {
 			record.RequestedAt = parsed
 		}
 	}
-	store.HandleUsage(record)
-	return nil
+	return store.HandleUsage(record)
 }
 
 func usageRecordFromObject(object map[string]any) billing.UsageRecord {

@@ -1,8 +1,6 @@
 // Mirrors the CLIProxyAPI management center browser credential contract.
 const AUTH_STORAGE_KEY = 'cli-proxy-auth';
 const AUTH_LOGIN_MARKER = 'isLoggedIn';
-const AUTH_PREFIX = 'enc::v1::';
-const AUTH_SALT = 'cli-proxy-api-webui::secure-storage';
 const HOST_THEME_STORAGE_KEY = 'cli-proxy-theme';
 
 function systemTheme() {
@@ -14,10 +12,10 @@ function storedHostTheme() {
     const raw = localStorage.getItem(HOST_THEME_STORAGE_KEY);
     if (!raw) return systemTheme();
     const payload = JSON.parse(raw);
-    const state = payload && typeof payload === 'object' && payload.state && typeof payload.state === 'object'
-      ? payload.state
-      : payload;
-    const theme = state && typeof state.theme === 'string' ? state.theme : '';
+    if (!payload || typeof payload !== 'object' || !payload.state || typeof payload.state !== 'object') {
+      return systemTheme();
+    }
+    const theme = typeof payload.state.theme === 'string' ? payload.state.theme : '';
     if (theme === 'dark' || theme === 'white' || theme === 'light') return theme;
     return systemTheme();
   } catch (_) {
@@ -65,26 +63,19 @@ function readManagementKey() {
     if (!raw) return '';
 
     let json = raw;
-    if (raw.startsWith(AUTH_PREFIX)) {
-      const binary = atob(raw.slice(AUTH_PREFIX.length));
+    if (raw.startsWith('enc::v1::')) {
+      const binary = atob(raw.slice('enc::v1::'.length));
       const encrypted = new Uint8Array(binary.length);
-      for (let index = 0; index < binary.length; index++) {
-        encrypted[index] = binary.charCodeAt(index);
-      }
-      const key = new TextEncoder().encode(
-        AUTH_SALT + '|' + window.location.host + '|' + navigator.userAgent,
-      );
+      for (let index = 0; index < binary.length; index++) encrypted[index] = binary.charCodeAt(index);
+      const key = new TextEncoder().encode('cli-proxy-api-webui::secure-storage|'
+        + window.location.host + '|' + navigator.userAgent);
       const plain = new Uint8Array(encrypted.length);
-      for (let index = 0; index < encrypted.length; index++) {
-        plain[index] = encrypted[index] ^ key[index % key.length];
-      }
+      for (let index = 0; index < encrypted.length; index++) plain[index] = encrypted[index] ^ key[index % key.length];
       json = new TextDecoder().decode(plain);
     }
-
     const payload = JSON.parse(json);
     const state = payload && typeof payload === 'object' && payload.state && typeof payload.state === 'object'
-      ? payload.state
-      : payload;
+      ? payload.state : payload;
     return typeof state.managementKey === 'string' ? state.managementKey.trim() : '';
   } catch (_) {
     return '';

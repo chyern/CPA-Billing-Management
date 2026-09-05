@@ -45,9 +45,12 @@ func EnsureSchema(db *sql.DB) error {
 			cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
 			total_tokens INTEGER NOT NULL DEFAULT 0,
 			cost REAL NOT NULL DEFAULT 0,
-			priced_by TEXT NOT NULL DEFAULT ''
+			priced_by TEXT NOT NULL DEFAULT '',
+			priced INTEGER NOT NULL DEFAULT 0 CHECK (priced IN (0, 1))
 		);
 		CREATE INDEX IF NOT EXISTS idx_usage_events_requested_at ON usage_events(requested_at);
+		CREATE INDEX IF NOT EXISTS idx_usage_events_date_range ON usage_events(rtrim(requested_at, 'Z'));
+		CREATE INDEX IF NOT EXISTS idx_usage_events_status ON usage_events(failed, id);
 		CREATE INDEX IF NOT EXISTS idx_usage_events_provider_model ON usage_events(provider, model);
 		CREATE INDEX IF NOT EXISTS idx_usage_events_api_key_id ON usage_events(api_key_id);
 		CREATE TABLE IF NOT EXISTS model_aggregates (
@@ -83,6 +86,7 @@ func EnsureSchema(db *sql.DB) error {
 			caller_scope TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL
 		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_balances_caller_scope ON api_key_balances(caller_scope) WHERE caller_scope <> '';
 		CREATE TABLE IF NOT EXISTS api_key_balance_notes (
 			api_key_id TEXT PRIMARY KEY,
 			api_key TEXT NOT NULL DEFAULT '',
@@ -92,41 +96,6 @@ func EnsureSchema(db *sql.DB) error {
 	`)
 	if err != nil {
 		return fmt.Errorf("initialize normalized billing database: %w", err)
-	}
-	if err := ensureAPIKeyBalanceCallerScope(db); err != nil {
-		return err
-	}
-	return nil
-}
-
-func ensureAPIKeyBalanceCallerScope(db *sql.DB) error {
-	rows, err := db.Query(`PRAGMA table_info(api_key_balances)`)
-	if err != nil {
-		return fmt.Errorf("inspect API key balance schema: %w", err)
-	}
-	hasCallerScope := false
-	for rows.Next() {
-		var cid, notNull, primaryKey int
-		var name, columnType string
-		var defaultValue any
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("scan API key balance schema: %w", err)
-		}
-		if name == "caller_scope" {
-			hasCallerScope = true
-		}
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	if !hasCallerScope {
-		if _, err := db.Exec(`ALTER TABLE api_key_balances ADD COLUMN caller_scope TEXT NOT NULL DEFAULT ''`); err != nil {
-			return fmt.Errorf("add API key caller scope: %w", err)
-		}
-	}
-	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_balances_caller_scope ON api_key_balances(caller_scope) WHERE caller_scope <> ''`); err != nil {
-		return fmt.Errorf("index API key caller scope: %w", err)
 	}
 	return nil
 }
@@ -182,32 +151,28 @@ func loadRules(db *sql.DB) ([]PriceRule, error) {
 	return rules, rows.Err()
 }
 
+const eventColumns = `requested_at, provider, model, alias, api_key, api_key_id, auth_type, source,
+ latency_ns, ttft_ns, failed, input_tokens, output_tokens, reasoning_tokens,
+ cached_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, cost, priced_by, priced`
+
 func loadEvents(db *sql.DB) ([]UsageEvent, error) {
-	rows, err := db.Query(`
-		SELECT requested_at, provider, model, alias, api_key, api_key_id, auth_type, source,
-		       latency_ns, ttft_ns, failed, input_tokens, output_tokens, reasoning_tokens,
-		       cached_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, cost, priced_by
-		FROM usage_events ORDER BY id
-	`)
+	rows, err := db.Query(`SELECT `+eventColumns+` FROM (SELECT * FROM usage_events ORDER BY id DESC LIMIT ?) ORDER BY id`, maxCachedEvents)
 	if err != nil {
 		return nil, fmt.Errorf("load usage events: %w", err)
 	}
+	return scanUsageEvents(rows)
+}
+
+func scanUsageEvents(rows *sql.Rows) ([]UsageEvent, error) {
 	defer rows.Close()
-	var events []UsageEvent
+	events := make([]UsageEvent, 0)
 	for rows.Next() {
 		var event UsageEvent
 		var requestedAt string
-		var failed int
-		if err := rows.Scan(
-			&requestedAt, &event.Provider, &event.Model, &event.Alias, &event.APIKey, &event.APIKeyID,
-			&event.AuthType, &event.Source, &event.LatencyNanos, &event.TTFTNanos, &failed,
-			&event.InputTokens, &event.OutputTokens, &event.ReasoningTokens, &event.CachedTokens,
-			&event.CacheReadTokens, &event.CacheCreationTokens, &event.TotalTokens, &event.Cost, &event.PricedBy,
-		); err != nil {
+		if err := rows.Scan(&requestedAt, &event.Provider, &event.Model, &event.Alias, &event.APIKey, &event.APIKeyID, &event.AuthType, &event.Source, &event.LatencyNanos, &event.TTFTNanos, &event.Failed, &event.InputTokens, &event.OutputTokens, &event.ReasoningTokens, &event.CachedTokens, &event.CacheReadTokens, &event.CacheCreationTokens, &event.TotalTokens, &event.Cost, &event.PricedBy, &event.Priced); err != nil {
 			return nil, fmt.Errorf("scan usage event: %w", err)
 		}
 		event.RequestedAt = parseDatabaseTime(requestedAt)
-		event.Failed = failed != 0
 		event.Source = MaskSensitiveSource(event.Source)
 		events = append(events, event)
 	}

@@ -6,14 +6,15 @@ const vm = require('node:vm');
 
 const script = fs.readFileSync(path.join(__dirname, '../internal/dashboard/assets/pricing.js'), 'utf8');
 
-async function loadDashboard(savedRules, models) {
+async function loadDashboard(savedRules, models, {initialRules = [], waitForModels, waitForPricing} = {}) {
   const elements = new Map();
   const requests = [];
   const element = id => {
     if (!elements.has(id)) elements.set(id, {
-      textContent: id === 'initial' ? '{}' : '',
+      textContent: id === 'initial' ? JSON.stringify({rules: initialRules}) : '',
       innerHTML: '', value: '', style: {},
-      addEventListener() {}, appendChild() {},
+      listeners: {},
+      addEventListener(type, listener) { this.listeners[type] = listener; }, appendChild() {},
     });
     return elements.get(id);
   };
@@ -31,9 +32,15 @@ async function loadDashboard(savedRules, models) {
       requests.push({url, options});
       let payload;
       if (url === '/v0/management/config') payload = {'api-keys': ['test-key']};
-      else if (url === '/v1/models') payload = {data: models};
+      else if (url === '/v1/models') {
+        if (waitForModels) await waitForModels;
+        payload = {data: models};
+      }
       else if (options.method === 'POST') payload = {rules: JSON.parse(options.body).rules, changes: []};
-      else payload = {rules: savedRules, currency: 'USD'};
+      else {
+        if (waitForPricing) await waitForPricing;
+        payload = {rules: savedRules, currency: 'USD'};
+      }
       return {ok: true, status: 200, json: async () => payload};
     },
   });
@@ -48,6 +55,29 @@ const priceRule = (match, input = 0, output = 0, cacheRead = 0, cacheCreation = 
   match, input_per_million: input, output_per_million: output,
   cache_read_per_million: cacheRead, cache_creation_per_million: cacheCreation,
 });
+
+const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+
+function deferred() {
+  let resolve;
+  const promise = new Promise(done => { resolve = done; });
+  return {promise, resolve};
+}
+
+function editRule(elements, index, values) {
+  const saveButton = {disabled: true};
+  const row = {
+    dataset: {i: String(index)},
+    querySelector: () => saveButton,
+    querySelectorAll: () => inputs,
+  };
+  const inputs = Object.entries(values).map(([key, value]) => ({
+    dataset: {k: key}, value: String(value),
+    closest: selector => selector === 'input' ? inputs[0] : row,
+  }));
+  elements.get('rules').listeners.input({target: inputs[0]});
+  assert.equal(saveButton.disabled, false);
+}
 
 test('an empty database displays served models and includes them in the sync preview', async () => {
   const {context, elements, requests} = await loadDashboard([], [
@@ -92,4 +122,54 @@ test('model merging preserves saved prices, normalizes prefixes, and retains wil
   assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(rules)', context)), expected);
   await vm.runInContext('loadServedModels()', context);
   assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(rules)', context)), expected);
+});
+
+test('delayed model discovery preserves unsaved prices and empty fields when it re-renders', async () => {
+  const modelsReady = deferred();
+  const {context, elements} = await loadDashboard([priceRule('gpt-5.5', 2.5, 15)], [
+    {id: 'gpt-5.5', owned_by: 'codex'},
+    {id: 'claude-sonnet', owned_by: 'claude'},
+  ], {waitForModels: modelsReady.promise});
+  editRule(elements, 0, {...priceRule('gpt-5.5', 9.75, ''), cache_read_per_million: ''});
+  modelsReady.resolve();
+  await nextTurn();
+
+  assert.equal(vm.runInContext('rules[0].input_per_million', context), 9.75);
+  assert.equal(vm.runInContext('Number.isNaN(rules[0].output_per_million)', context), true);
+  assert.equal(vm.runInContext('rules[0]._dirty', context), true);
+  const markup = elements.get('rules').innerHTML;
+  assert.match(markup, /data-k="input_per_million"[^>]*value="9.75"/);
+  assert.match(markup, /data-k="output_per_million"[^>]*value=""/);
+  assert.match(markup, /data-action="save-row" data-index="0">/);
+  assert.match(markup, /value="claude-sonnet" readonly/);
+});
+
+test('delayed model discovery preserves a partially entered new rule', async () => {
+  const modelsReady = deferred();
+  const {context, elements} = await loadDashboard([], [{id: 'gpt-5.5', owned_by: 'codex'}], {
+    waitForModels: modelsReady.promise,
+  });
+  elements.get('add').onclick();
+  editRule(elements, 0, priceRule('custom-model', 7, '', '', ''));
+  modelsReady.resolve();
+  await nextTurn();
+
+  assert.equal(vm.runInContext('rules[0].match', context), 'custom-model');
+  assert.equal(vm.runInContext('rules[0].input_per_million', context), 7);
+  assert.match(elements.get('rules').innerHTML, /value="custom-model"/);
+  assert.match(elements.get('rules').innerHTML, /data-k="input_per_million"[^>]*value="7"/);
+  assert.match(elements.get('rules').innerHTML, /data-k="output_per_million"[^>]*value=""/);
+});
+
+test('initial pricing refresh does not replace edits made before it completes', async () => {
+  const pricingReady = deferred();
+  const {context, elements} = await loadDashboard([priceRule('gpt-5.5', 2)], [], {
+    initialRules: [priceRule('gpt-5.5', 1)], waitForPricing: pricingReady.promise,
+  });
+  editRule(elements, 0, priceRule('gpt-5.5', 8));
+  pricingReady.resolve();
+  await nextTurn();
+
+  assert.equal(vm.runInContext('rules[0].input_per_million', context), 8);
+  assert.match(elements.get('rules').innerHTML, /data-k="input_per_million"[^>]*value="8"/);
 });
