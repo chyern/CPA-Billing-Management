@@ -96,11 +96,11 @@ func syncUpstreamPricesFromSourceWithClient(store *billing.Store, client *http.C
 	return reconcileUpstreamPricesFromSourceWithClient(store, client, source, rules, true)
 }
 
-func previewUpstreamPricesFromSourceWithClient(store *billing.Store, client *http.Client, source pricingSource, rules []billing.PriceRule) (upstreamSyncResult, error) {
-	return reconcileUpstreamPricesFromSourceWithClient(store, client, source, rules, false)
+func previewUpstreamPricesFromSourceWithClient(store *billing.Store, client *http.Client, source pricingSource, rules []billing.PriceRule, served ...[]syncModel) (upstreamSyncResult, error) {
+	return reconcileUpstreamPricesFromSourceWithClient(store, client, source, rules, false, served...)
 }
 
-func reconcileUpstreamPricesFromSourceWithClient(store *billing.Store, client *http.Client, source pricingSource, rules []billing.PriceRule, apply bool) (upstreamSyncResult, error) {
+func reconcileUpstreamPricesFromSourceWithClient(store *billing.Store, client *http.Client, source pricingSource, rules []billing.PriceRule, apply bool, served ...[]syncModel) (upstreamSyncResult, error) {
 	result := upstreamSyncResult{Source: source.URL, SourceID: source.ID, SourceName: source.Name}
 	if store == nil {
 		return result, fmt.Errorf("billing store is unavailable")
@@ -146,6 +146,11 @@ func reconcileUpstreamPricesFromSourceWithClient(store *billing.Store, client *h
 
 	rules = append([]billing.PriceRule(nil), rules...)
 	models := syncModels(rules)
+	// When the pricing editor is empty, callers can provide the models exposed
+	// by CLIProxyAPI so upstream prices can still be discovered and added.
+	if len(served) > 0 && len(served[0]) > 0 {
+		models = mergeSyncModels(models, served[0])
+	}
 	for _, model := range models {
 		price, ok := catalog.lookup(model.Model)
 		if !ok {
@@ -202,8 +207,9 @@ type syncModel struct {
 	Model string
 }
 
-// syncModels includes only models currently present in the pricing editor.
-// Usage events are intentionally independent from pricing-rule maintenance.
+// syncModels extracts models currently present in the pricing editor.
+// Usage events are intentionally independent from pricing-rule maintenance;
+// callers may merge the currently served model catalog separately.
 func syncModels(rules []billing.PriceRule) []syncModel {
 	result := make([]syncModel, 0, len(rules))
 	seen := make(map[string]struct{}, len(rules))
@@ -228,6 +234,24 @@ func syncModels(rules []billing.PriceRule) []syncModel {
 			match = strings.TrimSpace(match[index+1:])
 		}
 		add(match)
+	}
+	return result
+}
+
+func mergeSyncModels(base, extra []syncModel) []syncModel {
+	result := make([]syncModel, 0, len(base)+len(extra))
+	seen := make(map[string]struct{}, len(base)+len(extra))
+	for _, model := range append(append([]syncModel(nil), base...), extra...) {
+		name := strings.TrimSpace(model.Model)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, syncModel{Model: name})
 	}
 	return result
 }

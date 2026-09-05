@@ -131,6 +131,10 @@ func TestLocaleScriptReadsPersistedLanguageAndAvoidsObserverLoop(t *testing.T) {
 		"if (next !== node.nodeValue) node.nodeValue = next",
 		"if (next !== current) element.setAttribute(attribute, next)",
 		"document.querySelector('title')",
+		"cpa-billing-management",
+		"translateParentNavigation",
+		"aside.sidebar",
+		"parentNavigationObserver",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("locale script is missing %q", expected)

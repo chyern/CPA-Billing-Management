@@ -69,9 +69,7 @@ function normalizeRules(source) {
 }
 
 function ruleMatchesModel(value, model) {
-  const match = String(value || '').trim().toLowerCase();
-  const modelName = String(model || '').trim().toLowerCase();
-  return match === modelName || (match.includes('/') && modelRuleKey(match) === modelName);
+  return modelRuleKey(value) === modelRuleKey(model);
 }
 
 function filterRules() {
@@ -154,6 +152,22 @@ function renderCatalog() {
   document.getElementById('catalog').innerHTML = rows
     ? '<table><thead><tr><th>Provider</th><th>Model</th><th class="num">输入 / 1M</th><th class="num">输出 / 1M</th><th class="num">缓存读取 / 1M</th><th class="num">缓存创建 / 1M</th></tr></thead><tbody>' + rows + '</tbody></table>'
     : '<div class="empty">暂无可用模型</div>';
+}
+
+function mergeCatalogIntoRules() {
+  const existing = new Set(rules.map(rule => modelRuleKey(rule.match)));
+  catalogModels.forEach(model => {
+    const match = modelRuleKey(model.model);
+    if (!match || existing.has(match)) return;
+    const effective = effectiveCatalogRule(match);
+    const rule = {match};
+    priceFields.forEach(field => {
+      const value = effective.price[field];
+      rule[field] = Number.isFinite(Number(value)) ? Number(value) : 0;
+    });
+    rules.push(rule);
+    existing.add(match);
+  });
 }
 
 function readRules() {
@@ -296,6 +310,9 @@ async function loadServedModels() {
     });
     if (served.length === 0) return false;
     catalogModels = served;
+    // The editor supplies the model list for upstream-price previews. Include
+    // served models even when no pricing rules have been saved yet.
+    mergeCatalogIntoRules();
     renderRules();
     renderCatalog();
     return true;
@@ -368,7 +385,12 @@ syncButton.onclick = async () => {
   syncSource.disabled = true;
   showStatus('正在从 ' + syncSource.options[syncSource.selectedIndex].text + ' 获取价格…');
   try {
-    const data = await requestPricing(SYNC_API + '?source=' + encodeURIComponent(source) + '&preview=1', {method: 'POST', body: JSON.stringify({rules})});
+    // Send the currently served model list so a fresh editor (with no saved
+    // rules yet) can still reconcile prices from the upstream catalog.
+    const data = await requestPricing(SYNC_API + '?source=' + encodeURIComponent(source) + '&preview=1', {
+      method: 'POST',
+      body: JSON.stringify({rules, models: catalogModels.map(model => ({provider: model.provider, model: model.model}))}),
+    });
     rules = normalizeRules(data.rules || rules);
     syncChanges = Object.fromEntries((data.changes || []).map(change => [String(change.match || '').toLowerCase(), change]));
     rules.forEach(rule => {

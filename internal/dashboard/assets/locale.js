@@ -2,6 +2,7 @@
   const languageKey = 'cli-proxy-language';
   const translations = {
     en: {
+      'cpa-billing-management': 'CPA Billing Management', '费用统计': 'Billing Statistics', '模型费用': 'Model Pricing', '密钥余额': 'Key Balances',
       'CPA 费用统计': 'CPA Billing Statistics', 'CPA 模型费用': 'CPA Model Pricing', 'CPA 密钥余额': 'CPA Key Balances',
       '模型': 'Model',
       '自动刷新': 'Auto refresh', '不刷新': 'Off', '今天': 'Today', '近 7 天': 'Last 7 days', '近 30 天': 'Last 30 days', '5 秒': '5 sec', '10 秒': '10 sec', '15 秒': '15 sec', '不足 1 ms': '<1 ms', '首字': 'TTFT',
@@ -38,6 +39,7 @@
       '搜索 Key 或备注...': 'Search Key or note...', '默认兜底': 'Default fallback', '未找到匹配项': 'No matching items found', '失败率': 'Failure rate',
     },
     'zh-TW': {
+      'cpa-billing-management': 'CPA 帳務管理', '费用统计': '費用統計', '模型费用': '模型費用', '密钥余额': '金鑰餘額',
       'CPA 费用统计': 'CPA 費用統計', 'CPA 模型费用': 'CPA 模型費用', 'CPA 密钥余额': 'CPA 金鑰餘額', '自动刷新': '自動重新整理', '不刷新': '不重新整理',
       '模型': '模型',
       '今天': '今天', '昨天': '昨天', '近 7 天': '近 7 天', '近 30 天': '近 30 天', '开始日期': '開始日期', '结束日期': '結束日期', '查询': '查詢', '重置': '重設',
@@ -51,6 +53,7 @@
       '已更新': '已更新', '暂无 usage 事件': '暫無 usage 事件', '暂无 API Key 数据': '暫無 API Key 資料', ['暂无' + '最近' + '事件']: '暫無' + '最近' + '事件',
     },
     ru: {
+      'cpa-billing-management': 'Управление биллингом CPA', '费用统计': 'Статистика расходов', '模型费用': 'Цены моделей', '密钥余额': 'Баланс ключей',
       'CPA 费用统计': 'Статистика расходов CPA', 'CPA 模型费用': 'Цены моделей CPA', 'CPA 密钥余额': 'Баланс ключей CPA', '自动刷新': 'Автообновление', '不刷新': 'Выкл.',
       '模型': 'Модель',
       '今天': 'Сегодня', '昨天': 'Вчера', '近 7 天': 'Последние 7 дней', '近 30 天': 'Последние 30 дней', '开始日期': 'Дата начала', '结束日期': 'Дата окончания', '查询': 'Запросить', '重置': 'Сбросить',
@@ -177,11 +180,11 @@
   const dictionary = translations[locale] || {};
   document.documentElement.lang = locale;
   window.cpaTranslate = value => dictionary[String(value)] || value;
+  const replace = value => Object.keys(dictionary).sort((a, b) => b.length - a.length).reduce((text, key) => text.split(key).join(dictionary[key]), value);
   let translating = false;
   const translate = () => {
     if (translating || locale === 'zh-CN') return;
     translating = true;
-    const replace = value => Object.keys(dictionary).sort((a, b) => b.length - a.length).reduce((text, key) => text.split(key).join(dictionary[key]), value);
     const title = document.querySelector('title');
     if (title) {
       const nextTitle = replace(title.textContent || '');
@@ -212,6 +215,41 @@
   const observer = new MutationObserver(translate);
   const start = () => { translate(); observer.observe(document.body, {childList: true, subtree: true, characterData: true}); };
   if (document.body) start(); else document.addEventListener('DOMContentLoaded', start, {once: true});
+
+  // Resource routes are rendered by the host management shell, outside this
+  // iframe. Translate only the plugin's own sidebar labels so the shell's
+  // other navigation remains under its own localization control.
+  const translateParentNavigation = () => {
+    if (locale === 'zh-CN' || !window.parent || window.parent === window) return;
+    try {
+      const parentDocument = window.parent.document;
+      const sidebar = parentDocument.querySelector('aside.sidebar');
+      if (!sidebar) return;
+      const labels = new Set(['cpa-billing-management', '费用统计', '模型费用', '密钥余额']);
+      const walker = parentDocument.createTreeWalker(sidebar, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      nodes.forEach(node => {
+        const raw = node.nodeValue || '';
+        const label = raw.trim();
+        if (!labels.has(label)) return;
+        const translated = dictionary[label];
+        if (!translated || translated === label) return;
+        node.nodeValue = raw.replace(label, translated);
+      });
+    } catch (_) {}
+  };
+  let parentNavigationObserver;
+  const startParentNavigation = () => {
+    if (locale === 'zh-CN' || !window.parent || window.parent === window) return;
+    try {
+      const parentDocument = window.parent.document;
+      translateParentNavigation();
+      parentNavigationObserver = new MutationObserver(translateParentNavigation);
+      parentNavigationObserver.observe(parentDocument.body, {childList: true, subtree: true, characterData: true});
+    } catch (_) {}
+  };
+  startParentNavigation();
   const reloadIfLanguageChanged = () => {
     if (getLanguage() !== locale) window.location.reload();
   };

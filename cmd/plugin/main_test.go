@@ -368,6 +368,27 @@ func TestPreviewSyncIncludesModelsAlreadyInRules(t *testing.T) {
 	}
 }
 
+func TestPreviewSyncIncludesServedModelsWhenRulesEmpty(t *testing.T) {
+	store, err := billing.NewStore(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"gpt-4o":{"input_cost_per_token":0.0000025,"output_cost_per_token":0.00001}}`))
+	}))
+	defer server.Close()
+	source, _ := findPricingSource("litellm")
+	served := []syncModel{{Model: "gpt-4o"}}
+	result, err := previewUpstreamPricesFromSourceWithClient(store, server.Client(), pricingSource{ID: source.ID, Name: source.Name, URL: server.URL, Decode: source.Decode}, nil, served)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Matched != 1 || result.Added != 1 || len(result.Rules) != 1 || result.Rules[0].Match != "gpt-4o" {
+		t.Fatalf("served-model preview result = %+v", result)
+	}
+}
+
 func TestSyncPreservesFreeModelsAndSkipsNegativeSentinels(t *testing.T) {
 	store, err := billing.NewStore(filepath.Join(t.TempDir(), "data"))
 	if err != nil {

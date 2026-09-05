@@ -141,16 +141,23 @@ func handlePricingSync(store *billing.Store, req abi.ManagementRequest) ([]byte,
 	}
 	var result upstreamSyncResult
 	rules := store.Rules()
+	var served []syncModel
 	if len(req.Body) > 0 {
 		var payload struct {
-			Rules []billing.PriceRule `json:"rules"`
+			Rules  []billing.PriceRule   `json:"rules"`
+			Models []pricingCatalogModel `json:"models"`
 		}
 		if decodeErr := json.Unmarshal(req.Body, &payload); decodeErr != nil {
 			return jsonManagementError(http.StatusBadRequest, decodeErr.Error())
 		}
 		rules = payload.Rules
+		for _, model := range payload.Models {
+			if name := strings.TrimSpace(model.Model); name != "" {
+				served = append(served, syncModel{Model: name})
+			}
+		}
 	}
-	result, err := previewUpstreamPricesFromSourceWithClient(store, &http.Client{Timeout: 15 * time.Second}, source, rules)
+	result, err := previewUpstreamPricesFromSourceWithClient(store, &http.Client{Timeout: 15 * time.Second}, source, rules, served)
 	if err != nil {
 		return jsonManagementError(http.StatusBadGateway, err.Error())
 	}

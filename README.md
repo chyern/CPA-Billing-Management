@@ -12,7 +12,7 @@ CLIProxyAPI 自定义插件：接收 usage 事件，优先使用上游金额，�
 - 使用结构化 SQLite 表持久化设置、价格规则、usage 事件、按模型汇总和按 API Key 汇总；数据库文件为数据目录下的 `billing.db`，默认目录是操作系统用户配置目录下的 `cliproxyapi/cpa-billing-management`；
 - 在 CLIProxyAPI 管理页增加“费用统计”菜单，展示总费用、按模型汇总、按脱敏 API Key 汇总，以及最近请求的总耗时和首 Token 耗时；最近事件支持分页和可选的 5/10/15 秒自动刷新；
 - 在独立的“模型费用”页面编辑价格规则；费用页只列出 CLIProxyAPI `/v1/models` 当前暴露的模型，没有匹配价格规则的模型默认显示为 0，并标记为“未配置模型费用”。同步价格时先获取本地与上游的差异，确认后再保存，避免一次拉取直接覆盖人工调整。
-- 模型费用页默认不添加价格规则；支持按需从 [LiteLLM 公共模型价格目录](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)、[Models.dev](https://models.dev/) 或 [OpenRouter Models API](https://openrouter.ai/docs/api-reference/list-available-models) 同步当前已使用且可识别的模型，未识别的模型仍可手动配置。
+- 模型费用页会将 CLIProxyAPI 当前暴露的模型加入编辑器作为零价占位（已有规则和通配规则保持不变）；支持按需从 [LiteLLM 公共模型价格目录](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)、[Models.dev](https://models.dev/) 或 [OpenRouter Models API](https://openrouter.ai/docs/api-reference/list-available-models) 同步价格，未识别的模型仍可手动配置。
 - 提供独立的“密钥余额”页面，可为客户端 API Key 设置当前余额；后续 usage 事件产生费用时自动扣减，并展示累计请求、累计费用和余额状态。已设置且余额耗尽的密钥会在访问上游前返回 HTTP 402；未设置余额的密钥继续放行。完整密钥不会写入账单数据库。
 
 当前 CLIProxyAPI 的 `UsagePlugin` ABI 主要提供 token、耗时等字段，通常不包含金额，因此大多数文本模型会走模型价格估算。价格单位是配置币种/每百万 token，估算结果请以供应商账单为准。
