@@ -261,10 +261,11 @@ func TestStoreRequiresCurrentSchemaColumns(t *testing.T) {
 			if err := s.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if reopened, err := NewStore(dataDir); err == nil {
-				_ = reopened.Close()
-				t.Fatal("opened database with missing current schema column")
+			reopened, err := NewStore(dataDir)
+			if err != nil {
+				t.Fatalf("migrate database: %v", err)
 			}
+			defer reopened.Close()
 			db, err := sql.Open("sqlite3", filepath.Join(dataDir, "billing.db"))
 			if err != nil {
 				t.Fatal(err)
@@ -274,8 +275,8 @@ func TestStoreRequiresCurrentSchemaColumns(t *testing.T) {
 			if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", tc.table, tc.column).Scan(&columns); err != nil {
 				t.Fatal(err)
 			}
-			if columns != 0 {
-				t.Fatal("opening a database added a missing schema column")
+			if columns != 1 {
+				t.Fatal("opening a database did not add missing schema column")
 			}
 		})
 	}

@@ -86,7 +86,6 @@ func EnsureSchema(db *sql.DB) error {
 			caller_scope TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL
 		);
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_balances_caller_scope ON api_key_balances(caller_scope) WHERE caller_scope <> '';
 		CREATE TABLE IF NOT EXISTS api_key_balance_notes (
 			api_key_id TEXT PRIMARY KEY,
 			api_key TEXT NOT NULL DEFAULT '',
@@ -96,6 +95,27 @@ func EnsureSchema(db *sql.DB) error {
 	`)
 	if err != nil {
 		return fmt.Errorf("initialize normalized billing database: %w", err)
+	}
+	// CREATE TABLE IF NOT EXISTS does not add columns to an existing database.
+	// Add newer columns in place so upgrades remain usable without data loss.
+	for table, columns := range map[string]map[string]string{
+		"usage_events":     {"priced": "INTEGER NOT NULL DEFAULT 0 CHECK (priced IN (0, 1))"},
+		"api_key_balances": {"caller_scope": "TEXT NOT NULL DEFAULT ''"},
+	} {
+		for column, definition := range columns {
+			var count int
+			if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&count); err != nil {
+				return fmt.Errorf("inspect billing column %s.%s: %w", table, column, err)
+			}
+			if count == 0 {
+				if _, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + definition); err != nil {
+					return fmt.Errorf("add billing column %s.%s: %w", table, column, err)
+				}
+			}
+		}
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_balances_caller_scope ON api_key_balances(caller_scope) WHERE caller_scope <> ''`); err != nil {
+		return fmt.Errorf("initialize billing balance index: %w", err)
 	}
 	return nil
 }
