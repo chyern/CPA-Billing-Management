@@ -235,7 +235,7 @@ function renderEvents() {
   const emptyView = '<div class="empty"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><div class="empty-title">暂无最近事件</div><div class="empty-desc">最近处理的 API 请求事件会实时出现在这里</div></div>';
 
   const eventTable = events.length
-      ? '<table><thead><tr><th>时间</th><th>模型</th><th>API Key</th><th class="num">耗时/首字</th><th class="num">输入/缓存</th><th class="num">输出</th><th class="num">费用 ' + costHelp + '</th><th>状态</th></tr></thead><tbody>'
+      ? '<div class="table-responsive"><table><thead><tr><th>时间</th><th>模型</th><th>API Key</th><th class="num">耗时/首字</th><th class="num">输入/缓存</th><th class="num">输出</th><th class="num">费用 ' + costHelp + '</th><th>状态</th></tr></thead><tbody>'
       + events.map(event => '<tr>'
         + '<td>' + escapeHTML(new Date(event.requested_at).toLocaleString()) + '</td>'
         + '<td>' + escapeHTML(event.model || '-') + (!event.priced ? ' <span class="pill">未配置模型费用</span>' : '') + '</td>'
@@ -246,7 +246,7 @@ function renderEvents() {
         + '<td class="num">' + formatMoney(event.cost) + '</td>'
         + '<td>' + (event.failed ? '<span class="pill danger">失败</span>' : '<span class="pill success">成功</span>') + '</td>'
       + '</tr>').join('')
-      + '</tbody></table>'
+      + '</tbody></table></div>'
     : emptyView;
   const page = Number(state.recent_events_page || 1);
   const pages = Math.max(1, Number(state.recent_events_pages || 1));

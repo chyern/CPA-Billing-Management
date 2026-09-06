@@ -542,6 +542,7 @@ h2 {
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s ease;
+  white-space: nowrap;
 }
 
 .pill-btn:hover {
@@ -562,6 +563,12 @@ h2 {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.query-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .field {
@@ -660,6 +667,23 @@ input:focus {
 }
 
 /* Tables & Data */
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+}
+
+.table-responsive table {
+  margin: 0;
+}
+
+.table-responsive tbody tr:last-child td {
+  border-bottom: 0;
+}
+
 table {
   width: 100%;
   min-width: 720px;
@@ -771,6 +795,7 @@ td.num {
   right: 0;
   z-index: 20;
   width: 260px;
+  max-width: min(260px, calc(100vw - 48px));
   padding: 10px 12px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
@@ -1096,6 +1121,9 @@ td.num {
   justify-content: center;
   gap: 14px;
   padding: 16px;
+  position: sticky;
+  left: 0;
+  width: 100%;
 }
 
 /* Empty States */
@@ -1461,31 +1489,61 @@ input.invalid {
   .search-box input {
     width: 100% !important;
   }
+  .query-panel {
+    padding: 16px 14px;
+  }
   .query-controls {
     flex-direction: column;
     align-items: stretch;
   }
   .quick-dates {
     width: 100%;
-    justify-content: space-between;
-    flex-wrap: wrap;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+    gap: 6px;
+  }
+  .quick-dates::-webkit-scrollbar {
+    display: none;
   }
   .pill-btn {
     flex: 1;
-    min-width: 60px;
+    min-width: 0;
+    padding: 0 10px;
     text-align: center;
+    font-size: 12px;
   }
   .date-inputs-wrap {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .date-inputs-wrap .field {
-    justify-content: space-between;
-  }
-  .date-inputs-wrap input[type="date"] {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
     width: 100%;
   }
-  .query-controls .btn {
+  .date-inputs-wrap .field {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+  }
+  .date-inputs-wrap .field span {
+    flex-shrink: 0;
+  }
+  .date-inputs-wrap input[type="date"] {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+  }
+  .query-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    width: 100%;
+  }
+  .query-actions .btn {
     width: 100%;
   }
   .sync-controls {
@@ -1516,8 +1574,46 @@ input.invalid {
 }
 
 @media (max-width: 480px) {
-  .grid,
+  body {
+    padding: 16px 12px;
+  }
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
   .grid.grid-5 {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .card {
+    padding: 14px 12px;
+  }
+  .card .value {
+    font-size: 18px;
+  }
+  .panel {
+    padding: 16px 12px;
+  }
+  .cpa-toast-container {
+    bottom: 16px;
+    right: 12px;
+    left: 12px;
+  }
+  .cpa-toast {
+    max-width: none;
+    width: 100%;
+  }
+  .pager {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px 6px;
+  }
+  .pager .muted {
+    order: -1;
+    width: 100%;
+    text-align: center;
+  }
+  .pager .btn {
+    flex: 1;
   }
 }

@@ -43,8 +43,10 @@
         <div class="date-inputs-wrap">
           <label class="field" for="startDate"><span>开始日期</span><input id="startDate" type="date"></label>
           <label class="field" for="endDate"><span>结束日期</span><input id="endDate" type="date"></label>
-          <button class="btn primary" id="query">查询</button>
-          <button class="btn" id="resetQuery">重置</button>
+          <div class="query-actions">
+            <button class="btn primary" id="query">查询</button>
+            <button class="btn" id="resetQuery">重置</button>
+          </div>
         </div>
       </div>
     </section>
@@ -84,7 +86,7 @@
           </div>
         </div>
       </div>
-      <div id="events" class="table-responsive"></div>
+      <div id="events"></div>
     </section>
     <div id="toastContainer" class="cpa-toast-container"></div>
   </main>
