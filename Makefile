@@ -38,9 +38,7 @@ smoke: build
 install-local: smoke
 	@test -n "$(CPA_PLUGIN_DIR)" || (echo "CPA_PLUGIN_DIR is required" && exit 1)
 	@mkdir -p "$(CPA_PLUGIN_DIR)"
-	# Keep the canonical filename in place so the CLIProxyAPI loader discovers
-	# the plugin immediately after refresh/restart.
-	install -m 755 "$(BIN_DIR)/$(PLUGIN_ID).$(PLUGIN_EXT)" "$(CPA_PLUGIN_DIR)/$(PLUGIN_ID).$(PLUGIN_EXT)"
+	install -m 755 "$(BIN_DIR)/$(PLUGIN_ID).$(PLUGIN_EXT)" "$(CPA_PLUGIN_DIR)/$(PLUGIN_ID)-v$(PLUGIN_VERSION).$(PLUGIN_EXT)"
 
 preview:
 	$(GO) run ./cmd/preview
