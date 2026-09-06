@@ -96,7 +96,7 @@ make install-local \\
   CPA_PLUGIN_DIR=/absolute/path/to/.cli-proxy-api/plugins/darwin/arm64
 ```
 
-`install-local` 会直接覆盖当前 Tag 对应的同版本插件文件，不创建本地备份。以后重新执行 `make install-local` 并重启 CLIProxyAPI 即可加载新构建；账单数据库和插件配置不会被修改。
+`install-local` 会覆盖插件目录中的标准文件名 `cpa-billing-management.dylib`（Linux 为 `.so`），确保管理中心刷新或重启后立即发现新构建，不创建本地备份；账单数据库和插件配置不会被修改。
 
 启动 CLIProxyAPI 后，在管理页进入“费用统计”查看账单，或进入“模型费用”维护价格。管理 API 路由为：
 
