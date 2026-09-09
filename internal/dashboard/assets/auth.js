@@ -58,25 +58,10 @@ initializeHostThemeSync();
 
 function readManagementKey() {
   try {
-    // CLIProxyAPI persists remembered credentials in localStorage. Keep the
-    // sessionStorage branch for older management-center builds that used it.
-    const stores = [];
-    if (typeof localStorage !== 'undefined') stores.push(localStorage);
-    if (typeof sessionStorage !== 'undefined' && sessionStorage !== localStorage) stores.push(sessionStorage);
-    let raw = '';
-    let loggedIn = false;
-    for (let index = 0; index < stores.length; index++) {
-      const store = stores[index];
-      const marker = store.getItem(AUTH_LOGIN_MARKER) === 'true';
-      const candidate = store.getItem(AUTH_STORAGE_KEY) || '';
-      if (marker) loggedIn = true;
-      // A session credential may exist without a marker on older versions;
-      // localStorage credentials still require its explicit login marker.
-      if (!raw && candidate && (marker || index > 0)) raw = candidate;
-    }
-    // Some older builds did not mirror isLoggedIn into sessionStorage; the
-    // presence of a session credential is sufficient evidence for this request.
-    if (!loggedIn && !raw) return '';
+    // The management center keeps unremembered credentials only in its own
+    // React state. Do not assume it writes a sessionStorage credential.
+    if (localStorage.getItem(AUTH_LOGIN_MARKER) !== 'true') return '';
+    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
     if (!raw) return '';
 
     let json = raw;
@@ -99,95 +84,163 @@ function readManagementKey() {
   }
 }
 
+// Plugin iframes are recreated on menu switches, but the same-origin management
+// window survives. Its memory is the session boundary; no password is persisted.
+function getManagementSession() {
+  let owner = window;
+  try {
+    if (window.top !== window && window.top.location.origin === window.location.origin
+        && window.top.location.pathname === '/management.html') owner = window.top;
+  } catch (_) {}
+  const name = '__cpaBillingManagementAuthSession';
+  if (!owner[name]) {
+    const session = {managementKey: '', shared: owner !== window};
+    Object.defineProperty(owner, name, {value: session, configurable: true});
+    const clear = () => { session.managementKey = ''; };
+    owner.addEventListener('unauthorized', clear);
+    owner.addEventListener('hashchange', () => {
+      if (/^#\/login(?:[/?]|$)/.test(owner.location.hash || '')) clear();
+    });
+  }
+  return owner[name];
+}
+
 const ENFORCE_MANAGEMENT_AUTH = window.location.pathname.startsWith('/v0/resource/plugins/');
-let MANAGEMENT_KEY = readManagementKey();
-const authHeaders = () => MANAGEMENT_KEY ? {Authorization:'Bearer '+MANAGEMENT_KEY} : {};
+const MANAGEMENT_SESSION = getManagementSession();
+let MANAGEMENT_KEY = MANAGEMENT_SESSION.managementKey || readManagementKey();
+MANAGEMENT_SESSION.managementKey = MANAGEMENT_KEY;
+const authHeaders = () => {
+  MANAGEMENT_KEY = MANAGEMENT_SESSION.managementKey;
+  return MANAGEMENT_KEY ? {Authorization:'Bearer '+MANAGEMENT_KEY} : {};
+};
 
 let managementLoginPromise = null;
+const authText = value => typeof window.cpaTranslate === 'function' ? window.cpaTranslate(value) : value;
 
 function managementLogin() {
   if (managementLoginPromise) return managementLoginPromise;
   managementLoginPromise = new Promise(resolve => {
-    const backdrop = document.createElement('div');
-    backdrop.className = 'cpa-modal-backdrop active';
-    backdrop.setAttribute('role', 'dialog');
-    backdrop.setAttribute('aria-modal', 'true');
-    backdrop.setAttribute('aria-labelledby', 'cpaLoginTitle');
-    backdrop.innerHTML = `
-      <div class="cpa-modal-card cpa-auth-card">
-        <div class="cpa-modal-header">
-          <div class="cpa-modal-icon-wrap info"><svg class="cpa-modal-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
-          <div class="cpa-modal-title-wrap"><h3 class="cpa-modal-title" id="cpaLoginTitle">需要登录</h3><p class="cpa-modal-desc">请输入 CLIProxyAPI 管理密码以继续。密码只保存在当前页面，刷新后需要重新输入。</p></div>
+    const dialog = document.createElement('dialog');
+    dialog.className = 'cpa-auth-dialog';
+    dialog.setAttribute('aria-labelledby', 'cpaLoginTitle');
+    dialog.setAttribute('aria-describedby', 'cpaLoginDescription');
+    dialog.innerHTML = `
+      <div class="cpa-auth-brand"><span class="cpa-auth-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><path d="M12 14v3"/></svg></span><span>CPA Billing</span></div>
+      <h2 id="cpaLoginTitle">登录账单管理</h2>
+      <p id="cpaLoginDescription" class="cpa-auth-description">输入 CLIProxyAPI 管理密码，继续查看和管理账单。</p>
+      <form class="cpa-auth-form" novalidate>
+        <label for="cpaLoginPassword">管理密码</label>
+        <div class="cpa-auth-password">
+          <input id="cpaLoginPassword" type="password" autocomplete="current-password" placeholder="请输入管理密码" aria-describedby="cpaLoginError" required autofocus>
+          <button class="cpa-auth-visibility" type="button" aria-label="显示密码" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button>
         </div>
-        <form class="cpa-auth-form">
-          <input class="cpa-auth-input" type="password" autocomplete="current-password" placeholder="管理密码" aria-label="管理密码" required>
-          <div class="cpa-auth-error" role="alert" aria-live="polite"></div>
-          <button class="btn primary cpa-auth-submit" type="submit">登录</button>
-        </form>
-      </div>`;
-    document.body.appendChild(backdrop);
-    const form = backdrop.querySelector('.cpa-auth-form');
-    const input = backdrop.querySelector('.cpa-auth-input');
-    const error = backdrop.querySelector('.cpa-auth-error');
-    const submit = backdrop.querySelector('.cpa-auth-submit');
-    const close = result => {
-      managementLoginPromise = null;
-      backdrop.remove();
-      resolve(result);
+        <p id="cpaLoginError" class="cpa-auth-error" role="alert"></p>
+        <button class="btn primary cpa-auth-submit" type="submit"><span class="cpa-auth-spinner" aria-hidden="true"></span><span class="cpa-auth-submit-label">登录并继续</span><span class="cpa-auth-arrow" aria-hidden="true">→</span></button>
+      </form>
+      <p class="cpa-auth-note">切换菜单无需重复登录，刷新管理中心后需重新输入。</p>`;
+    document.body.appendChild(dialog);
+    if (!MANAGEMENT_SESSION.shared) dialog.querySelector('.cpa-auth-note').textContent = authText('密码仅在当前页面有效，刷新后需重新输入。');
+    const form = dialog.querySelector('.cpa-auth-form');
+    const input = dialog.querySelector('input');
+    const error = dialog.querySelector('.cpa-auth-error');
+    const submit = dialog.querySelector('.cpa-auth-submit');
+    const submitLabel = dialog.querySelector('.cpa-auth-submit-label');
+    const visibility = dialog.querySelector('.cpa-auth-visibility');
+    let submitting = false;
+    dialog.addEventListener('cancel', event => event.preventDefault());
+    visibility.addEventListener('click', () => {
+      const visible = input.type === 'password';
+      input.type = visible ? 'text' : 'password';
+      visibility.setAttribute('aria-pressed', String(visible));
+      visibility.setAttribute('aria-label', authText(visible ? '隐藏密码' : '显示密码'));
+    });
+    const showError = message => {
+      error.textContent = authText(message);
+      input.setAttribute('aria-invalid', 'true');
     };
+    input.addEventListener('input', () => {
+      error.textContent = '';
+      input.removeAttribute('aria-invalid');
+    });
     form.addEventListener('submit', async event => {
       event.preventDefault();
-      const key = String(input.value || '').trim();
+      if (submitting) return;
+      const key = input.value.trim();
       if (!key) {
-        error.textContent = '请输入管理密码';
+        showError('请输入管理密码');
         input.focus();
         return;
       }
+      submitting = true;
       submit.disabled = true;
       input.readOnly = true;
-      error.textContent = '正在验证…';
+      visibility.disabled = true;
+      form.setAttribute('aria-busy', 'true');
+      submitLabel.textContent = authText('正在验证…');
+      error.textContent = '';
+      input.removeAttribute('aria-invalid');
       try {
         const response = await fetch('/v0/management/debug', {
-          method: 'GET', credentials: 'same-origin',
+          method: 'GET', credentials: 'same-origin', cache: 'no-store',
+          signal: AbortSignal.timeout(15000),
           headers: {Authorization: 'Bearer ' + key},
         });
         if (!response.ok) {
-          error.textContent = response.status === 401 ? '管理密码错误，请重试' : '登录失败，请稍后重试';
+          showError(response.status === 401 ? '管理密码错误，请重试'
+            : response.status === 403 ? '访问受限，请检查管理权限或稍后重试' : '登录失败，请稍后重试');
           return;
         }
         MANAGEMENT_KEY = key;
-        close(true);
+        MANAGEMENT_SESSION.managementKey = key;
+        input.value = '';
+        dialog.close();
+        dialog.remove();
+        managementLoginPromise = null;
+        resolve(true);
       } catch (_) {
-        error.textContent = '无法连接 CLIProxyAPI，请检查服务状态';
+        showError('无法连接 CLIProxyAPI，请检查服务状态');
       } finally {
+        submitting = false;
         submit.disabled = false;
         input.readOnly = false;
+        visibility.disabled = false;
+        form.setAttribute('aria-busy', 'false');
+        submitLabel.textContent = authText('登录并继续');
+        if (dialog.open) input.focus();
       }
     });
-    input.focus();
+    dialog.showModal();
   });
   return managementLoginPromise;
 }
 
 async function requireManagementKey(forcePrompt = false) {
-  if (MANAGEMENT_KEY && !forcePrompt) return true;
+  MANAGEMENT_KEY = MANAGEMENT_SESSION.managementKey;
+  if (MANAGEMENT_KEY) return true;
   if (!ENFORCE_MANAGEMENT_AUTH && !forcePrompt) return true;
   return managementLogin();
 }
 
-// All resource API calls use this wrapper so a missing or expired credential
-// asks for the password in-place instead of navigating away from the plugin.
+// Retry only rejected authentication requests. A late 401 from an old key must
+// not invalidate a newer login shared by another request or plugin iframe.
 async function managementFetch(url, options = {}, shouldContinue = () => true) {
-  if (!await requireManagementKey()) return null;
+  await requireManagementKey();
   if (!shouldContinue()) return null;
   const request = () => fetch(url, Object.assign({credentials: 'same-origin'}, options, {
     headers: Object.assign({}, options.headers || {}, authHeaders()),
   }));
+  const rejectedKey = MANAGEMENT_SESSION.managementKey;
   let response = await request();
   if (response.status !== 401 || !shouldContinue()) return response;
-  MANAGEMENT_KEY = '';
-  if (!await requireManagementKey(true) || !shouldContinue()) return null;
-  return request();
+  if (MANAGEMENT_SESSION.managementKey === rejectedKey) MANAGEMENT_SESSION.managementKey = '';
+  await requireManagementKey(true);
+  if (!shouldContinue()) return null;
+  const retryKey = MANAGEMENT_SESSION.managementKey;
+  response = await request();
+  if (response.status === 401 && MANAGEMENT_SESSION.managementKey === retryKey) {
+    MANAGEMENT_SESSION.managementKey = '';
+  }
+  return response;
 }
 
 function redirectToManagementLogin() {

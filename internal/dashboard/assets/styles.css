@@ -1218,6 +1218,81 @@ input.invalid {
   box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.25) !important;
 }
 
+/* Login lives in the browser's modal layer, with keyboard focus kept inside. */
+.cpa-auth-dialog {
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 34px;
+  overflow: auto;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-hover);
+  border-radius: 22px;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.3);
+}
+
+.cpa-auth-dialog::backdrop {
+  background: rgba(10, 13, 20, 0.46);
+  backdrop-filter: blur(6px);
+}
+
+.cpa-auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 26px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.cpa-auth-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  color: var(--primary-color);
+  background: var(--primary-glow);
+}
+
+.cpa-auth-icon svg { width: 22px; height: 22px; }
+.cpa-auth-dialog h2 { margin: 0 0 10px; font-size: 23px; font-weight: 650; letter-spacing: -0.02em; }
+.cpa-auth-description { margin: 0 0 26px; color: var(--text-secondary); font-size: 13px; line-height: 1.8; }
+.cpa-auth-form label { display: block; margin-bottom: 9px; font-size: 13px; font-weight: 600; }
+.cpa-auth-password { position: relative; }
+
+.cpa-auth-password input {
+  width: 100%;
+  height: 46px;
+  padding: 0 48px 0 14px;
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  outline: none;
+}
+
+.cpa-auth-password input::placeholder { color: var(--text-tertiary); font-size: 13px; }
+.cpa-auth-password input:focus { border-color: var(--border-focus); box-shadow: 0 0 0 3px var(--primary-glow); }
+.cpa-auth-password input[aria-invalid="true"] { border-color: var(--accent-rose); box-shadow: none; }
+.cpa-auth-visibility { position: absolute; right: 6px; top: 5px; width: 36px; height: 36px; padding: 8px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.cpa-auth-visibility:hover, .cpa-auth-visibility[aria-pressed="true"] { color: var(--primary-color); background: var(--primary-glow); }
+.cpa-auth-visibility svg { width: 20px; height: 20px; }
+.cpa-auth-error { min-height: 20px; margin: 8px 0 12px; color: var(--accent-rose); font-size: 12px; line-height: 20px; }
+.btn.cpa-auth-submit { width: 100%; height: 46px; display: flex; align-items: center; justify-content: center; gap: 10px; border-radius: 10px; font-size: 14px; font-weight: 600; }
+.cpa-auth-arrow { font-size: 18px; }
+.cpa-auth-note { margin: 22px 0 0; padding-top: 18px; border-top: 1px solid var(--border-color); color: var(--text-tertiary); font-size: 12px; line-height: 1.8; }
+.cpa-auth-spinner { display: none; width: 15px; height: 15px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; }
+.cpa-auth-form[aria-busy="true"] .cpa-auth-spinner { display: inline-block; animation: cpa-auth-spin 0.8s linear infinite; }
+.cpa-auth-form[aria-busy="true"] .cpa-auth-arrow { display: none; }
+@keyframes cpa-auth-spin { to { transform: rotate(360deg); } }
+@media (max-width: 480px) { .cpa-auth-dialog { padding: 26px 24px; border-radius: 18px; } }
+@media (prefers-reduced-motion: reduce) { .cpa-auth-form[aria-busy="true"] .cpa-auth-spinner { animation: none; } }
+
 /* Custom Secondary Confirmation Modal */
 .cpa-modal-backdrop {
   position: fixed;

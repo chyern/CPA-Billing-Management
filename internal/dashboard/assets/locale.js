@@ -149,6 +149,58 @@
   };
   Object.keys(extraTranslations).forEach((language) => Object.assign(translations[language], extraTranslations[language]));
 
+  const authTranslations = {
+  "en": {
+    "登录账单管理": "Sign in to billing",
+    "输入 CLIProxyAPI 管理密码，继续查看和管理账单。": "Enter your CLIProxyAPI management password to view and manage billing.",
+    "管理密码": "Management password",
+    "请输入管理密码": "Enter your management password",
+    "显示密码": "Show password",
+    "隐藏密码": "Hide password",
+    "登录并继续": "Sign in and continue",
+    "正在验证…": "Verifying…",
+    "管理密码错误，请重试": "Incorrect password. Please try again.",
+    "访问受限，请检查管理权限或稍后重试": "Access restricted. Check management permissions or try again later.",
+    "登录失败，请稍后重试": "Sign-in failed. Please try again later.",
+    "无法连接 CLIProxyAPI，请检查服务状态": "Cannot connect to CLIProxyAPI. Check the service status.",
+    "切换菜单无需重复登录，刷新管理中心后需重新输入。": "Switch menus without signing in again. Refreshing the management center clears this session.",
+    "密码仅在当前页面有效，刷新后需重新输入。": "Your password stays in this page only. Enter it again after refreshing."
+  },
+  "zh-TW": {
+    "登录账单管理": "登入帳單管理",
+    "输入 CLIProxyAPI 管理密码，继续查看和管理账单。": "輸入 CLIProxyAPI 管理密碼，繼續查看和管理帳單。",
+    "管理密码": "管理密碼",
+    "请输入管理密码": "請輸入管理密碼",
+    "显示密码": "顯示密碼",
+    "隐藏密码": "隱藏密碼",
+    "登录并继续": "登入並繼續",
+    "正在验证…": "正在驗證…",
+    "管理密码错误，请重试": "管理密碼錯誤，請重試",
+    "访问受限，请检查管理权限或稍后重试": "存取受限，請檢查管理權限或稍後重試",
+    "登录失败，请稍后重试": "登入失敗，請稍後重試",
+    "无法连接 CLIProxyAPI，请检查服务状态": "無法連線 CLIProxyAPI，請檢查服務狀態",
+    "切换菜单无需重复登录，刷新管理中心后需重新输入。": "切換選單無需重複登入，重新整理管理中心後需重新輸入。",
+    "密码仅在当前页面有效，刷新后需重新输入。": "密碼僅在目前頁面有效，重新整理後需重新輸入。"
+  },
+  "ru": {
+    "登录账单管理": "Вход в управление счетами",
+    "输入 CLIProxyAPI 管理密码，继续查看和管理账单。": "Введите пароль управления CLIProxyAPI для просмотра и управления счетами.",
+    "管理密码": "Пароль управления",
+    "请输入管理密码": "Введите пароль управления",
+    "显示密码": "Показать пароль",
+    "隐藏密码": "Скрыть пароль",
+    "登录并继续": "Войти и продолжить",
+    "正在验证…": "Проверка…",
+    "管理密码错误，请重试": "Неверный пароль. Повторите попытку.",
+    "访问受限，请检查管理权限或稍后重试": "Доступ ограничен. Проверьте права управления или повторите попытку позже.",
+    "登录失败，请稍后重试": "Не удалось войти. Повторите попытку позже.",
+    "无法连接 CLIProxyAPI，请检查服务状态": "Не удалось подключиться к CLIProxyAPI. Проверьте состояние сервиса.",
+    "切换菜单无需重复登录，刷新管理中心后需重新输入。": "При переключении меню повторный вход не нужен. Обновление центра управления сбрасывает сеанс.",
+    "密码仅在当前页面有效，刷新后需重新输入。": "Пароль действует только на этой странице. После обновления введите его снова."
+  }
+};
+  Object.keys(authTranslations).forEach(language => Object.assign(translations[language], authTranslations[language]));
+
   const normalizeLanguage = value => {
     if (value === null || value === undefined) return '';
     let candidate = String(value).trim();
