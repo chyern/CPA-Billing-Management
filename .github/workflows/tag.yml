@@ -6,6 +6,8 @@ on:
       - main
     paths-ignore:
       - registry.json
+      - '**.md'
+      - plugin.config.example.yaml
 
 permissions:
   contents: read
