@@ -55,6 +55,7 @@ function loadDashboard() {
       return pending.promise;
     },
   });
+  context.managementFetch = (url, options) => context.fetch(url, options);
   vm.runInContext(script, context);
   return {context, elements, requests, documentListeners, refresh: () => refresh(), redirects: () => redirects};
 }

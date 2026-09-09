@@ -58,9 +58,8 @@ initializeHostThemeSync();
 
 function readManagementKey() {
   try {
-    // CLIProxyAPI persists remembered credentials in localStorage, but keeps
-    // one-off logins in sessionStorage. Resource pages must work for both
-    // modes, including when the login marker itself is session-scoped.
+    // CLIProxyAPI persists remembered credentials in localStorage. Keep the
+    // sessionStorage branch for older management-center builds that used it.
     const stores = [];
     if (typeof localStorage !== 'undefined') stores.push(localStorage);
     if (typeof sessionStorage !== 'undefined' && sessionStorage !== localStorage) stores.push(sessionStorage);
@@ -75,8 +74,8 @@ function readManagementKey() {
       // localStorage credentials still require its explicit login marker.
       if (!raw && candidate && (marker || index > 0)) raw = candidate;
     }
-    // Some CLIProxyAPI versions do not mirror isLoggedIn into sessionStorage;
-    // the presence of a credential is sufficient evidence for this request.
+    // Some older builds did not mirror isLoggedIn into sessionStorage; the
+    // presence of a session credential is sufficient evidence for this request.
     if (!loggedIn && !raw) return '';
     if (!raw) return '';
 
@@ -101,8 +100,95 @@ function readManagementKey() {
 }
 
 const ENFORCE_MANAGEMENT_AUTH = window.location.pathname.startsWith('/v0/resource/plugins/');
-const MANAGEMENT_KEY = readManagementKey();
+let MANAGEMENT_KEY = readManagementKey();
 const authHeaders = () => MANAGEMENT_KEY ? {Authorization:'Bearer '+MANAGEMENT_KEY} : {};
+
+let managementLoginPromise = null;
+
+function managementLogin() {
+  if (managementLoginPromise) return managementLoginPromise;
+  managementLoginPromise = new Promise(resolve => {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'cpa-modal-backdrop active';
+    backdrop.setAttribute('role', 'dialog');
+    backdrop.setAttribute('aria-modal', 'true');
+    backdrop.setAttribute('aria-labelledby', 'cpaLoginTitle');
+    backdrop.innerHTML = `
+      <div class="cpa-modal-card cpa-auth-card">
+        <div class="cpa-modal-header">
+          <div class="cpa-modal-icon-wrap info"><svg class="cpa-modal-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+          <div class="cpa-modal-title-wrap"><h3 class="cpa-modal-title" id="cpaLoginTitle">需要登录</h3><p class="cpa-modal-desc">请输入 CLIProxyAPI 管理密码以继续。密码只保存在当前页面，刷新后需要重新输入。</p></div>
+        </div>
+        <form class="cpa-auth-form">
+          <input class="cpa-auth-input" type="password" autocomplete="current-password" placeholder="管理密码" aria-label="管理密码" required>
+          <div class="cpa-auth-error" role="alert" aria-live="polite"></div>
+          <button class="btn primary cpa-auth-submit" type="submit">登录</button>
+        </form>
+      </div>`;
+    document.body.appendChild(backdrop);
+    const form = backdrop.querySelector('.cpa-auth-form');
+    const input = backdrop.querySelector('.cpa-auth-input');
+    const error = backdrop.querySelector('.cpa-auth-error');
+    const submit = backdrop.querySelector('.cpa-auth-submit');
+    const close = result => {
+      managementLoginPromise = null;
+      backdrop.remove();
+      resolve(result);
+    };
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      const key = String(input.value || '').trim();
+      if (!key) {
+        error.textContent = '请输入管理密码';
+        input.focus();
+        return;
+      }
+      submit.disabled = true;
+      input.readOnly = true;
+      error.textContent = '正在验证…';
+      try {
+        const response = await fetch('/v0/management/debug', {
+          method: 'GET', credentials: 'same-origin',
+          headers: {Authorization: 'Bearer ' + key},
+        });
+        if (!response.ok) {
+          error.textContent = response.status === 401 ? '管理密码错误，请重试' : '登录失败，请稍后重试';
+          return;
+        }
+        MANAGEMENT_KEY = key;
+        close(true);
+      } catch (_) {
+        error.textContent = '无法连接 CLIProxyAPI，请检查服务状态';
+      } finally {
+        submit.disabled = false;
+        input.readOnly = false;
+      }
+    });
+    input.focus();
+  });
+  return managementLoginPromise;
+}
+
+async function requireManagementKey(forcePrompt = false) {
+  if (MANAGEMENT_KEY && !forcePrompt) return true;
+  if (!ENFORCE_MANAGEMENT_AUTH && !forcePrompt) return true;
+  return managementLogin();
+}
+
+// All resource API calls use this wrapper so a missing or expired credential
+// asks for the password in-place instead of navigating away from the plugin.
+async function managementFetch(url, options = {}, shouldContinue = () => true) {
+  if (!await requireManagementKey()) return null;
+  if (!shouldContinue()) return null;
+  const request = () => fetch(url, Object.assign({credentials: 'same-origin'}, options, {
+    headers: Object.assign({}, options.headers || {}, authHeaders()),
+  }));
+  let response = await request();
+  if (response.status !== 401 || !shouldContinue()) return response;
+  MANAGEMENT_KEY = '';
+  if (!await requireManagementKey(true) || !shouldContinue()) return null;
+  return request();
+}
 
 function redirectToManagementLogin() {
   const target = new URL('/management.html#/login', window.location.origin).href;
@@ -113,14 +199,6 @@ function redirectToManagementLogin() {
     }
   } catch (_) {}
   window.location.replace(target);
-}
-
-function requireManagementKey() {
-  if (ENFORCE_MANAGEMENT_AUTH && !MANAGEMENT_KEY) {
-    redirectToManagementLogin();
-    return false;
-  }
-  return true;
 }
 
 window.showConfirmDialog = function showConfirmDialog(options) {

@@ -44,6 +44,7 @@ async function loadDashboard(savedRules, models, {initialRules = [], waitForMode
       return {ok: true, status: 200, json: async () => payload};
     },
   });
+  context.managementFetch = (url, options) => context.fetch(url, options);
   // No toast DOM is needed to exercise loading or syncing.
   context.document.getElementById = id => id === 'toastContainer' ? null : element(id);
   vm.runInContext(script, context);

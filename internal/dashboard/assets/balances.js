@@ -100,15 +100,11 @@ function showStatus(message, error = false) {
 }
 
 async function requestJSON(url, options = {}) {
-  if (!requireManagementKey()) throw new Error('管理中心登录已失效');
-  const response = await fetch(url, Object.assign({
+  const response = await managementFetch(url, Object.assign({
     credentials: 'same-origin',
     headers: {'Content-Type': 'application/json', ...authHeaders()},
   }, options));
-  if (response.status === 401) {
-    redirectToManagementLogin();
-    throw new Error('管理中心登录已失效');
-  }
+  if (!response) throw new Error('管理中心登录已取消');
   if (response.status === 409) throw new Error(t('余额已发生变化，请刷新页面后重试'));
   if (!response.ok) throw new Error(await response.text() || response.statusText);
   return response.json();
@@ -313,15 +309,12 @@ async function deleteAPIKey(item) {
   try {
     const value = item && item.api_key_value;
     if (!value) throw new Error('无法读取完整 API Key，未执行删除');
-    const response = await fetch('/v0/management/api-keys?value=' + encodeURIComponent(value), {
+    const response = await managementFetch('/v0/management/api-keys?value=' + encodeURIComponent(value), {
       method: 'DELETE',
       credentials: 'same-origin',
       headers: authHeaders(),
     });
-    if (response.status === 401) {
-      redirectToManagementLogin();
-      throw new Error('管理中心登录已失效');
-    }
+    if (!response) throw new Error('管理中心登录已取消');
     if (!response.ok) throw new Error(await response.text() || response.statusText);
     await patchBalance({api_key_id: item.api_key_id, delete: true, expected_balance_version: item.balance_version || ''});
     await loadBalances();

@@ -59,7 +59,7 @@ async function loadDashboard(initialBalances = [], options = {}) {
     if (gate) { gate.started(); await gate.promise; }
     return makeResponse(payload, status);
   };
-  const context = vm.createContext({window: {}, document: {getElementById: id => id === 'toastContainer' ? null : element(id), querySelector: () => null, querySelectorAll: () => [], addEventListener(type, fn) { listeners['document:' + type] = fn; }, createElement: () => ({style: {}, setAttribute() {}, remove() {}}), body: {appendChild() {}, removeChild() {}}}, crypto: webcrypto, TextEncoder, fetch: fetchImpl, requireManagementKey: () => true, authHeaders: () => ({}), redirectToManagementLogin() {}, setTimeout() {}});
+  const context = vm.createContext({window: {}, document: {getElementById: id => id === 'toastContainer' ? null : element(id), querySelector: () => null, querySelectorAll: () => [], addEventListener(type, fn) { listeners['document:' + type] = fn; }, createElement: () => ({style: {}, setAttribute() {}, remove() {}}), body: {appendChild() {}, removeChild() {}}}, crypto: webcrypto, TextEncoder, fetch: fetchImpl, requireManagementKey: () => true, authHeaders: () => ({}), managementFetch: (url, options) => fetchImpl(url, options), redirectToManagementLogin() {}, setTimeout() {}});
   vm.runInContext(script, context);
   const run = code => vm.runInContext(code, context);
   const dispatchInput = (id, cls, value) => {

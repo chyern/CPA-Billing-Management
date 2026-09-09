@@ -131,5 +131,5 @@ make install-local \\
 资源页面会复用 CLIProxyAPI 管理中心的浏览器登录状态：从同源 `localStorage` 的
 `cli-proxy-auth` 读取管理密钥，并通过
 `Authorization: Bearer <management-key>` 调用插件管理 API。管理中心勾选“记住密码”后，
-重新打开资源页会自动恢复；管理密钥缺失或 API 返回 401 时，页面会跳转到
-`/management.html#/login`。插件不再在配置或资源 HTML 中注入第二份管理密钥。
+重新打开资源页会自动恢复；未勾选时，资源页会在当前页面提示再次输入管理密码并验证，
+临时密钥只保存在当前页面内存中，刷新后需要重新输入。插件不在配置或资源 HTML 中注入管理密钥。

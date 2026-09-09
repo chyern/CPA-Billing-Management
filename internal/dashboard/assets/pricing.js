@@ -251,16 +251,12 @@ function showStatus(message, error = false) {
 }
 
 async function requestPricing(url = PRICING_API, options = {}) {
-  if (!requireManagementKey()) throw new Error('管理中心登录已失效');
   const request = Object.assign({
     credentials: 'same-origin',
     headers: {'Content-Type': 'application/json', ...authHeaders()},
   }, options);
-  const response = await fetch(url, request);
-  if (response.status === 401) {
-    redirectToManagementLogin();
-    throw new Error('管理中心登录已失效');
-  }
+  const response = await managementFetch(url, request);
+  if (!response) throw new Error('管理中心登录已取消');
   if (!response.ok) throw new Error(await response.text() || response.statusText);
   return response.json();
 }
@@ -277,12 +273,8 @@ async function saveRules(nextRules) {
 }
 
 async function requestHostManagement(url) {
-  if (!requireManagementKey()) throw new Error('管理中心登录已失效');
-  const response = await fetch(url, {credentials: 'same-origin', headers: authHeaders()});
-  if (response.status === 401) {
-    redirectToManagementLogin();
-    throw new Error('管理中心登录已失效');
-  }
+  const response = await managementFetch(url, {headers: authHeaders()});
+  if (!response) throw new Error('管理中心登录已取消');
   if (!response.ok) throw new Error(await response.text() || response.statusText);
   return response.json();
 }

@@ -340,7 +340,6 @@ function showStatus(message, error = false) {
 async function loadPage(page, automatic = false) {
   // An automatic refresh must not supersede a pending date/filter/page query.
   if (automatic && pageRequestPending) return;
-  if (!requireManagementKey()) return;
   const requestID = ++pageRequestID;
   pageRequestPending = true;
   const pageNumber = Math.max(1, page);
@@ -349,15 +348,12 @@ async function loadPage(page, automatic = false) {
     if (startDate.value) params.set('start', startDate.value);
     if (endDate.value) params.set('end', endDate.value);
     params.set('event_status', eventStatusFilterVal);
-    const response = await fetch(SUMMARY_API + '?' + params.toString(), {
-      credentials: 'same-origin',
+    const response = await managementFetch(SUMMARY_API + '?' + params.toString(), {
       headers: authHeaders(),
-    });
+    }, () => requestID === pageRequestID);
+    if (!response) return;
     if (requestID !== pageRequestID) return;
-    if (response.status === 401) {
-      redirectToManagementLogin();
-      return;
-    }
+    if (response.status === 401) throw new Error('管理密码错误，请重试');
     if (!response.ok) throw new Error(await response.text() || response.statusText);
     const payload = await response.json();
     if (requestID !== pageRequestID) return;
