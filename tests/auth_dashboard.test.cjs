@@ -7,7 +7,7 @@ const {TextEncoder, TextDecoder} = require('node:util');
 
 const source = fs.readFileSync(path.join(__dirname, '../internal/dashboard/assets/auth.js'), 'utf8');
 
-function readKey(value, loggedIn = true) {
+function readKey(value, loggedIn = true, sessionValue = null) {
   const storage = new Map([
     ['isLoggedIn', loggedIn ? 'true' : 'false'],
     ['cli-proxy-auth', value],
@@ -21,6 +21,7 @@ function readKey(value, loggedIn = true) {
     },
     document: {documentElement: {setAttribute() {}}, body: {}, addEventListener() {}},
     localStorage: {getItem: key => storage.get(key) || null},
+    sessionStorage: {getItem: key => key === 'cli-proxy-auth' ? sessionValue : (sessionValue ? 'true' : null)},
     navigator: {userAgent: 'test'},
     TextEncoder, TextDecoder,
     atob: value => Buffer.from(value, 'base64').toString('binary'),
@@ -42,4 +43,5 @@ test('reads the management center credential formats', () => {
   for (let index = 0; index < bytes.length; index++) bytes[index] ^= key[index % key.length];
   assert.equal(readKey('enc::v1::' + bytes.toString('base64')), 'encrypted-secret');
   assert.equal(readKey(JSON.stringify({state: {managementKey: 'secret'}}), false), '');
+  assert.equal(readKey('', false, JSON.stringify({state: {managementKey: 'session-secret'}})), 'session-secret');
 });

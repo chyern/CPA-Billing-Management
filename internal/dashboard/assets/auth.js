@@ -58,8 +58,26 @@ initializeHostThemeSync();
 
 function readManagementKey() {
   try {
-    if (localStorage.getItem(AUTH_LOGIN_MARKER) !== 'true') return '';
-    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+    // CLIProxyAPI persists remembered credentials in localStorage, but keeps
+    // one-off logins in sessionStorage. Resource pages must work for both
+    // modes, including when the login marker itself is session-scoped.
+    const stores = [];
+    if (typeof localStorage !== 'undefined') stores.push(localStorage);
+    if (typeof sessionStorage !== 'undefined' && sessionStorage !== localStorage) stores.push(sessionStorage);
+    let raw = '';
+    let loggedIn = false;
+    for (let index = 0; index < stores.length; index++) {
+      const store = stores[index];
+      const marker = store.getItem(AUTH_LOGIN_MARKER) === 'true';
+      const candidate = store.getItem(AUTH_STORAGE_KEY) || '';
+      if (marker) loggedIn = true;
+      // A session credential may exist without a marker on older versions;
+      // localStorage credentials still require its explicit login marker.
+      if (!raw && candidate && (marker || index > 0)) raw = candidate;
+    }
+    // Some CLIProxyAPI versions do not mirror isLoggedIn into sessionStorage;
+    // the presence of a credential is sufficient evidence for this request.
+    if (!loggedIn && !raw) return '';
     if (!raw) return '';
 
     let json = raw;
