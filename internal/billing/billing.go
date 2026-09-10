@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	stateVersion    = 4
+	stateVersion    = 6
 	maxCachedEvents = 10000
 	defaultCurrency = "USD"
 )
@@ -50,7 +50,7 @@ func NewStore(dataDir string) (*Store, error) {
 func emptyState() State {
 	return State{
 		Version: stateVersion, Currency: defaultCurrency, Rules: DefaultRules(),
-		Aggregates: map[string]*Aggregate{}, APIKeyAggregates: map[string]*APIKeyAggregate{},
+		APIKeyAggregates: map[string]*APIKeyAggregate{},
 	}
 }
 
@@ -87,7 +87,6 @@ func (s *Store) Reset() error {
 		return err
 	}
 	s.state.Events = nil
-	s.state.Aggregates = map[string]*Aggregate{}
 	s.state.APIKeyAggregates = map[string]*APIKeyAggregate{}
 	return nil
 }

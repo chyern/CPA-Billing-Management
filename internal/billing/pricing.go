@@ -100,23 +100,3 @@ func validateRules(rules []PriceRule) error {
 	}
 	return nil
 }
-
-func (s *Store) addModelAggregateLocked(event UsageEvent, priced bool) {
-	key := aggregateKey(event.Provider, event.Model)
-	aggregate := s.state.Aggregates[key]
-	if aggregate == nil {
-		aggregate = &Aggregate{Provider: event.Provider, Model: event.Model, Priced: true}
-		s.state.Aggregates[key] = aggregate
-	}
-	aggregate.Requests++
-	if event.Failed {
-		aggregate.FailedRequests++
-	}
-	aggregate.InputTokens += event.InputTokens
-	aggregate.OutputTokens += event.OutputTokens
-	aggregate.ReasoningTokens += event.ReasoningTokens
-	aggregate.CachedTokens += event.CachedTokens
-	aggregate.TotalTokens += event.TotalTokens
-	aggregate.Cost += event.Cost
-	aggregate.Priced = aggregate.Priced && priced
-}

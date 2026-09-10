@@ -19,6 +19,58 @@ func testStore(t *testing.T) *Store {
 	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
+
+func TestSnapshotUpgradePreservesVisibleHistoryAndDropsInternalFields(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustUsage(t, s, UsageRecord{Provider: "codex", Model: "old", Cost: 2, CostProvided: true})
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite3", filepath.Join(dir, "billing.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE usage_events ADD COLUMN auth_index TEXT DEFAULT 'old-index'; ALTER TABLE usage_events ADD COLUMN source TEXT DEFAULT 'old-source'; ALTER TABLE usage_events ADD COLUMN upstream TEXT DEFAULT ''; ALTER TABLE usage_events DROP COLUMN provider; ALTER TABLE usage_events DROP COLUMN domain`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	s, err = NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary := s.Summary(); summary.Totals.Cost != 2 || summary.RecentEvents[0].AuthIndex != "" {
+		t.Fatalf("upgrade changed history: %+v", summary)
+	}
+	mustUsage(t, s, UsageRecord{Provider: "codex", Model: "new", AuthIndex: "credential-index", Domain: "original.example", Cost: 3, CostProvided: true})
+	_ = s.Close()
+	s, err = NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var columns int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('usage_events')`).Scan(&columns); err != nil {
+		t.Fatal(err)
+	}
+	if columns != 14 {
+		t.Fatalf("event table contains %d columns, want ID plus 13 display values (including the fee currency)", columns)
+	}
+	var internal int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('usage_events') WHERE name IN ('auth_index', 'source', 'api_key_id', 'upstream', 'total_tokens', 'priced_by')`).Scan(&internal); err != nil {
+		t.Fatal(err)
+	}
+	if internal != 0 {
+		t.Fatal("internal event fields survived migration")
+	}
+	summary := s.Summary()
+	if summary.Totals.Cost != 5 || len(summary.RecentEvents) != 2 || summary.RecentEvents[1].Provider != "codex" || summary.RecentEvents[1].Domain != "original.example" || summary.RecentEvents[1].AuthIndex != "" || summary.RecentEvents[0].Domain != "" || summary.RecentEvents[0].Provider != "" {
+		t.Fatalf("snapshot changed after restart: %+v", summary)
+	}
+}
 func mustUsage(t *testing.T, s *Store, r UsageRecord) {
 	t.Helper()
 	if err := s.HandleUsage(r); err != nil {
@@ -42,7 +94,7 @@ func TestUsageTransactionFailurePreservesMemoryAndBalance(t *testing.T) {
 	}
 	mustUsage(t, s, UsageRecord{Model: "known", APIKey: key, Cost: 1, CostProvided: true})
 	before := stateJSON(t, s)
-	if _, err := s.db.Exec(`CREATE TRIGGER fail_balance_debit BEFORE UPDATE ON api_key_balances BEGIN SELECT RAISE(ABORT, 'forced debit failure'); END`); err != nil {
+	if _, err := s.db.Exec(`CREATE TRIGGER fail_balance_debit BEFORE UPDATE OF balance ON api_key_accounts BEGIN SELECT RAISE(ABORT, 'forced debit failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.HandleUsage(UsageRecord{Model: "known", APIKey: key, Cost: 2, CostProvided: true, Currency: "CNY"}); err == nil {
@@ -116,8 +168,7 @@ func TestSummaryRetainsHistoryBeyondEventCache(t *testing.T) {
 		}
 		state.Events[i] = UsageEvent{RequestedAt: stamp, Provider: "test", Model: "history", APIKey: "masked", APIKeyID: "history-id", InputTokens: 1, TotalTokens: 1, Cost: 1, PricedBy: "upstream", Priced: true, Failed: i%100 == 0}
 	}
-	models, keys, _, _ := summarizeEvents(state.Events)
-	state.Aggregates[aggregateKey("test", "history")] = models[0]
+	_, keys, _, _ := summarizeEvents(state.Events)
 	state.APIKeyAggregates["history-id"] = keys[0]
 	if err := ReplaceState(s.db, state); err != nil {
 		t.Fatal(err)
@@ -241,8 +292,7 @@ func TestStoreRequiresCurrentSchemaColumns(t *testing.T) {
 	for _, tc := range []struct {
 		table, column, prepare string
 	}{
-		{"usage_events", "priced", ""},
-		{"api_key_balances", "caller_scope", "DROP INDEX idx_api_key_balances_caller_scope"},
+		{"usage_events", "domain", ""},
 	} {
 		t.Run(tc.table+"."+tc.column, func(t *testing.T) {
 			dataDir := t.TempDir()
@@ -345,5 +395,60 @@ func TestUsageQueriesUseDateAndStatusIndexes(t *testing.T) {
 				t.Fatalf("expected %s, got plan %v", tc.index, plans)
 			}
 		})
+	}
+}
+
+func TestSnapshotAPIKeySummaryGroupsMaskedKeysWithoutIdentityJoins(t *testing.T) {
+	s := testStore(t)
+	stamp := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
+	for _, key := range []string{"sk-s-first-tail", "sk-s-second-tail"} {
+		mustUsage(t, s, UsageRecord{RequestedAt: stamp, APIKey: key, InputTokens: 2, OutputTokens: 3, Cost: 1, CostProvided: true})
+	}
+	// The independently maintained balance statistics must not drive this view.
+	if _, err := s.db.Exec(`DELETE FROM api_key_accounts`); err != nil {
+		t.Fatal(err)
+	}
+	for _, dates := range [][2]time.Time{{{}, {}}, {stamp, stamp.AddDate(0, 0, 1)}} {
+		sum, err := s.SummaryPageRangeStatus(1, 20, dates[0], dates[1], "all")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(sum.APIKeys) != 1 || sum.APIKeys[0].Requests != 2 || sum.APIKeys[0].Cost != 2 || sum.APIKeys[0].TotalTokens != 10 {
+			t.Fatalf("summary did not group snapshot labels: %+v", sum.APIKeys)
+		}
+	}
+}
+
+func TestCombinedUpstreamMigrationSplitsSavedValuesAndKeepsEmptyRows(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustUsage(t, s, UsageRecord{Model: "saved", Provider: "unused", Cost: 2, CostProvided: true})
+	mustUsage(t, s, UsageRecord{Model: "empty"})
+	_, err = s.db.Exec(`ALTER TABLE usage_events ADD COLUMN upstream TEXT NOT NULL DEFAULT '';
+ UPDATE usage_events SET upstream='vendor(test)(saved.example)' WHERE model='saved';
+ ALTER TABLE usage_events DROP COLUMN provider;
+ ALTER TABLE usage_events DROP COLUMN domain;`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	s, err = NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	rows := s.Summary().RecentEvents
+	if len(rows) != 2 || rows[0].Provider != "vendor(test)" || rows[0].Domain != "saved.example" || rows[0].Cost != 2 || rows[1].Provider != "" || rows[1].Domain != "" {
+		t.Fatalf("migration changed snapshots: %+v", rows)
+	}
+	var combined int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('usage_events') WHERE name='upstream'`).Scan(&combined); err != nil {
+		t.Fatal(err)
+	}
+	if combined != 0 {
+		t.Fatal("combined upstream column was not removed")
 	}
 }

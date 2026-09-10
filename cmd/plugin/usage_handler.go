@@ -27,6 +27,7 @@ func handleUsage(store *billing.Store, raw []byte) error {
 		}
 	}
 	record := usageRecordFromObject(object)
+	record.Domain = usageDomainSnapshot(record)
 	if requestedAt := stringValue(object, "RequestedAt"); requestedAt != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, requestedAt); err == nil {
 			record.RequestedAt = parsed
@@ -39,7 +40,7 @@ func usageRecordFromObject(object map[string]any) billing.UsageRecord {
 	record := billing.UsageRecord{
 		Provider: stringValue(object, "Provider"), ExecutorType: stringValue(object, "ExecutorType"),
 		Model: stringValue(object, "Model"), Alias: stringValue(object, "Alias"), APIKey: stringValue(object, "APIKey"),
-		AuthID: stringValue(object, "AuthID"), AuthType: stringValue(object, "AuthType"),
+		AuthID: stringValue(object, "AuthID"), AuthIndex: stringValue(object, "AuthIndex"), AuthType: stringValue(object, "AuthType"),
 		Source: stringValue(object, "Source"), Latency: time.Duration(intValue(object, "Latency")),
 		TTFT: time.Duration(intValue(object, "TTFT")), Failed: boolValue(object, "Failed"),
 		InputTokens: intValue(object, "InputTokens"), OutputTokens: intValue(object, "OutputTokens"),

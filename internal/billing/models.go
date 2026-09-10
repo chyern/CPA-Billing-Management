@@ -17,12 +17,14 @@ type PriceRule struct {
 }
 
 type UsageRecord struct {
+	Domain              string
 	Provider            string
 	ExecutorType        string
 	Model               string
 	Alias               string
 	APIKey              string
 	AuthID              string
+	AuthIndex           string
 	AuthType            string
 	Source              string
 	RequestedAt         time.Time
@@ -42,27 +44,30 @@ type UsageRecord struct {
 }
 
 type UsageEvent struct {
+	Currency            string    `json:"currency,omitempty"`
+	Domain              string    `json:"domain,omitempty"`
 	RequestedAt         time.Time `json:"requested_at"`
-	Provider            string    `json:"provider"`
+	Provider            string    `json:"provider,omitempty"`
 	Model               string    `json:"model"`
-	Alias               string    `json:"alias,omitempty"`
+	Alias               string    `json:"-"`
 	APIKey              string    `json:"api_key,omitempty"`
-	APIKeyID            string    `json:"api_key_id,omitempty"`
-	AuthType            string    `json:"auth_type,omitempty"`
-	Source              string    `json:"source,omitempty"`
+	APIKeyID            string    `json:"-"`
+	AuthType            string    `json:"-"`
+	AuthIndex           string    `json:"-"`
+	Source              string    `json:"-"`
 	LatencyNanos        int64     `json:"latency_ns,omitempty"`
 	TTFTNanos           int64     `json:"ttft_ns,omitempty"`
 	Failed              bool      `json:"failed"`
 	InputTokens         int64     `json:"input_tokens"`
 	OutputTokens        int64     `json:"output_tokens"`
-	ReasoningTokens     int64     `json:"reasoning_tokens"`
+	ReasoningTokens     int64     `json:"-"`
 	CachedTokens        int64     `json:"cached_tokens"`
-	CacheReadTokens     int64     `json:"cache_read_tokens"`
-	CacheCreationTokens int64     `json:"cache_creation_tokens"`
-	TotalTokens         int64     `json:"total_tokens"`
+	CacheReadTokens     int64     `json:"-"`
+	CacheCreationTokens int64     `json:"-"`
+	TotalTokens         int64     `json:"-"`
 	Cost                float64   `json:"cost"`
-	PricedBy            string    `json:"priced_by,omitempty"`
-	Priced              bool      `json:"priced"`
+	PricedBy            string    `json:"-"`
+	Priced              bool      `json:"-"`
 }
 
 type Aggregate struct {
@@ -108,7 +113,6 @@ type State struct {
 	UpdatedAt        time.Time                   `json:"updated_at"`
 	Rules            []PriceRule                 `json:"rules"`
 	Events           []UsageEvent                `json:"events"`
-	Aggregates       map[string]*Aggregate       `json:"aggregates"`
 	APIKeyAggregates map[string]*APIKeyAggregate `json:"api_key_aggregates"`
 }
 

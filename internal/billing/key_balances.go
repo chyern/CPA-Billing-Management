@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 	"time"
 )
@@ -29,68 +28,23 @@ func (s *Store) KeyBalances() ([]APIKeyBalance, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	byID := make(map[string]APIKeyBalance, len(s.state.APIKeyAggregates))
-	rows, err := s.db.Query(`SELECT api_key_id, api_key, caller_scope, balance, updated_at FROM api_key_balances ORDER BY api_key`)
+	rows, err := s.db.Query(`SELECT api_key_id, api_key, caller_scope, balance, note, requests, cost, balance_version
+	 FROM api_key_accounts WHERE api_key_id <> '' ORDER BY api_key, api_key_id`)
 	if err != nil {
-		return nil, fmt.Errorf("query API key balances: %w", err)
+		return nil, fmt.Errorf("query API key accounts: %w", err)
 	}
+	defer rows.Close()
+	result := make([]APIKeyBalance, 0)
 	for rows.Next() {
 		var item APIKeyBalance
-		if err := rows.Scan(&item.APIKeyID, &item.APIKey, &item.CallerScope, &item.Balance, &item.BalanceVersion); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("scan API key balance: %w", err)
+		var balance sql.NullFloat64
+		if err := rows.Scan(&item.APIKeyID, &item.APIKey, &item.CallerScope, &balance, &item.Note, &item.Requests, &item.Cost, &item.BalanceVersion); err != nil {
+			return nil, fmt.Errorf("scan API key account: %w", err)
 		}
-		item.Configured = true
-		byID[item.APIKeyID] = item
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	noteRows, err := s.db.Query(`SELECT api_key_id, api_key, note FROM api_key_balance_notes ORDER BY api_key`)
-	if err != nil {
-		return nil, fmt.Errorf("query API key balance notes: %w", err)
-	}
-	for noteRows.Next() {
-		var id, apiKey, note string
-		if err := noteRows.Scan(&id, &apiKey, &note); err != nil {
-			_ = noteRows.Close()
-			return nil, fmt.Errorf("scan API key balance note: %w", err)
-		}
-		item := byID[id]
-		item.APIKeyID = id
-		if strings.TrimSpace(item.APIKey) == "" {
-			item.APIKey = apiKey
-		}
-		item.Note = note
-		byID[id] = item
-	}
-	if err := noteRows.Close(); err != nil {
-		return nil, err
-	}
-	for id, aggregate := range s.state.APIKeyAggregates {
-		if strings.TrimSpace(id) == "" || aggregate == nil {
-			continue
-		}
-		item := byID[id]
-		item.APIKeyID = id
-		if strings.TrimSpace(item.APIKey) == "" {
-			item.APIKey = aggregate.APIKey
-		}
-		item.Requests = aggregate.Requests
-		item.Cost = aggregate.Cost
-		byID[id] = item
-	}
-	result := make([]APIKeyBalance, 0, len(byID))
-	for _, item := range byID {
+		item.Configured, item.Balance = balance.Valid, balance.Float64
 		result = append(result, item)
 	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].APIKey == result[j].APIKey {
-			return result[i].APIKeyID < result[j].APIKeyID
-		}
-		return result[i].APIKey < result[j].APIKey
-	})
-	return result, nil
+	return result, rows.Err()
 }
 
 // ErrBalanceConflict means usage or another editor changed a balance after the
@@ -166,7 +120,7 @@ func (s *Store) PatchKeyBalances(items []APIKeyBalanceUpdate) error {
 		for _, item := range items {
 			if item.ExpectedBalanceVersion != nil {
 				var version string
-				err := tx.QueryRow(`SELECT updated_at FROM api_key_balances WHERE api_key_id = ?`, item.APIKeyID).Scan(&version)
+				err := tx.QueryRow(`SELECT balance_version FROM api_key_accounts WHERE api_key_id = ?`, item.APIKeyID).Scan(&version)
 				if err != nil && err != sql.ErrNoRows {
 					return fmt.Errorf("read API key balance version: %w", err)
 				}
@@ -175,29 +129,29 @@ func (s *Store) PatchKeyBalances(items []APIKeyBalanceUpdate) error {
 				}
 			}
 			if item.Delete || (item.Configured != nil && !*item.Configured) {
-				if _, err := tx.Exec(`DELETE FROM api_key_balances WHERE api_key_id = ?`, item.APIKeyID); err != nil {
+				if _, err := tx.Exec(`UPDATE api_key_accounts SET balance=NULL, caller_scope='', balance_version='', updated_at=? WHERE api_key_id = ?`, now, item.APIKeyID); err != nil {
 					return fmt.Errorf("delete API key balance: %w", err)
 				}
 			} else if item.Balance != nil {
-				if _, err := tx.Exec(`INSERT INTO api_key_balances (api_key_id, api_key, caller_scope, balance, updated_at) VALUES (?, ?, ?, ?, ?)
+				if _, err := tx.Exec(`INSERT INTO api_key_accounts (api_key_id, api_key, caller_scope, balance, balance_version, updated_at) VALUES (?, ?, ?, ?, ?, ?)
 					ON CONFLICT(api_key_id) DO UPDATE SET api_key = excluded.api_key,
-					caller_scope = CASE WHEN excluded.caller_scope = '' THEN api_key_balances.caller_scope ELSE excluded.caller_scope END,
-					balance = excluded.balance, updated_at = excluded.updated_at`, item.APIKeyID, item.APIKey, item.CallerScope, *item.Balance, now); err != nil {
+					caller_scope = CASE WHEN excluded.caller_scope = '' THEN api_key_accounts.caller_scope ELSE excluded.caller_scope END,
+					balance = excluded.balance, balance_version = excluded.balance_version, updated_at = excluded.updated_at`, item.APIKeyID, item.APIKey, item.CallerScope, *item.Balance, now, now); err != nil {
 					return fmt.Errorf("update API key balance: %w", err)
 				}
 			}
 			if item.Delete || (item.Note != nil && *item.Note == "") {
-				if _, err := tx.Exec(`DELETE FROM api_key_balance_notes WHERE api_key_id = ?`, item.APIKeyID); err != nil {
+				if _, err := tx.Exec(`UPDATE api_key_accounts SET note='', updated_at=? WHERE api_key_id = ?`, now, item.APIKeyID); err != nil {
 					return fmt.Errorf("delete API key note: %w", err)
 				}
 			} else if item.Note != nil {
-				if _, err := tx.Exec(`INSERT INTO api_key_balance_notes (api_key_id, api_key, note, updated_at) VALUES (?, ?, ?, ?)
+				if _, err := tx.Exec(`INSERT INTO api_key_accounts (api_key_id, api_key, note, updated_at) VALUES (?, ?, ?, ?)
 					ON CONFLICT(api_key_id) DO UPDATE SET api_key = excluded.api_key, note = excluded.note, updated_at = excluded.updated_at`, item.APIKeyID, item.APIKey, *item.Note, now); err != nil {
 					return fmt.Errorf("update API key note: %w", err)
 				}
 			}
 		}
-		return nil
+		return pruneEmptyAccounts(tx)
 	})
 	if err != nil && !errors.Is(err, ErrBalanceConflict) {
 		s.lastErr = err
@@ -206,7 +160,7 @@ func (s *Store) PatchKeyBalances(items []APIKeyBalanceUpdate) error {
 }
 
 // SetKeyBalanceNotes replaces the optional descriptions associated with API
-// keys. Notes are stored independently so a key can have a description
+// keys. Notes do not enable balance tracking, so a key can have a description
 // without enabling balance tracking.
 func (s *Store) SetKeyBalanceNotes(items []APIKeyBalance) error {
 	s.mu.Lock()
@@ -244,15 +198,15 @@ func (s *Store) SetKeyBalanceNotes(items []APIKeyBalance) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	err := s.withTransaction(func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`DELETE FROM api_key_balance_notes`); err != nil {
+		if _, err := tx.Exec(`UPDATE api_key_accounts SET note='', updated_at=?`, now); err != nil {
 			return fmt.Errorf("clear API key balance notes: %w", err)
 		}
 		for _, record := range records {
-			if _, err := tx.Exec(`INSERT INTO api_key_balance_notes (api_key_id, api_key, note, updated_at) VALUES (?, ?, ?, ?)`, record.id, record.apiKey, record.note, now); err != nil {
+			if _, err := tx.Exec(`INSERT INTO api_key_accounts (api_key_id, api_key, note, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(api_key_id) DO UPDATE SET api_key=excluded.api_key, note=excluded.note, updated_at=excluded.updated_at`, record.id, record.apiKey, record.note, now); err != nil {
 				return fmt.Errorf("save API key balance note %q: %w", record.id, err)
 			}
 		}
-		return nil
+		return pruneEmptyAccounts(tx)
 	})
 	if err != nil {
 		s.lastErr = err
@@ -301,15 +255,15 @@ func (s *Store) SetKeyBalances(items []APIKeyBalance) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	err := s.withTransaction(func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`DELETE FROM api_key_balances`); err != nil {
+		if _, err := tx.Exec(`UPDATE api_key_accounts SET balance=NULL, caller_scope='', balance_version='', updated_at=?`, now); err != nil {
 			return fmt.Errorf("clear API key balances: %w", err)
 		}
 		for _, item := range items {
-			if _, err := tx.Exec(`INSERT INTO api_key_balances (api_key_id, api_key, caller_scope, balance, updated_at) VALUES (?, ?, ?, ?, ?)`, item.APIKeyID, item.APIKey, item.CallerScope, item.Balance, now); err != nil {
+			if _, err := tx.Exec(`INSERT INTO api_key_accounts (api_key_id, api_key, caller_scope, balance, balance_version, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(api_key_id) DO UPDATE SET api_key=excluded.api_key, caller_scope=excluded.caller_scope, balance=excluded.balance, balance_version=excluded.balance_version, updated_at=excluded.updated_at`, item.APIKeyID, item.APIKey, item.CallerScope, item.Balance, now, now); err != nil {
 				return fmt.Errorf("save API key balance %q: %w", item.APIKeyID, err)
 			}
 		}
-		return nil
+		return pruneEmptyAccounts(tx)
 	})
 	if err != nil {
 		s.lastErr = err
@@ -327,7 +281,7 @@ func (s *Store) BalanceForCallerScope(callerScope string) (float64, bool, error)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var balance float64
-	err := s.db.QueryRow(`SELECT balance FROM api_key_balances WHERE caller_scope = ?`, callerScope).Scan(&balance)
+	err := s.db.QueryRow(`SELECT balance FROM api_key_accounts WHERE caller_scope = ? AND balance IS NOT NULL`, callerScope).Scan(&balance)
 	if err == sql.ErrNoRows {
 		return 0, false, nil
 	}

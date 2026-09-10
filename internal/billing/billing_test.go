@@ -44,7 +44,7 @@ func TestStorePersistsUpstreamUsageCost(t *testing.T) {
 		t.Fatal("persistent billing state must not contain the complete API key")
 	}
 	var apiKeyAggregateCount int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM api_key_aggregates`).Scan(&apiKeyAggregateCount); err != nil {
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM api_key_accounts`).Scan(&apiKeyAggregateCount); err != nil {
 		t.Fatal(err)
 	}
 	if apiKeyAggregateCount != 1 {
@@ -118,9 +118,8 @@ func persistedDatabaseText(t *testing.T, store *Store) string {
 	queries := []string{
 		`SELECT currency FROM billing_settings`,
 		`SELECT match FROM pricing_rules`,
-		`SELECT provider || ' ' || model || ' ' || alias || ' ' || api_key || ' ' || api_key_id || ' ' || auth_type || ' ' || source || ' ' || priced_by FROM usage_events`,
-		`SELECT provider || ' ' || model FROM model_aggregates`,
-		`SELECT api_key FROM api_key_aggregates`,
+		`SELECT model || ' ' || provider || ' ' || domain || ' ' || api_key FROM usage_events`,
+		`SELECT api_key FROM api_key_accounts`,
 	}
 	var values []string
 	for _, query := range queries {
@@ -148,7 +147,7 @@ func TestStoreUsesNormalizedSQLiteTables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"billing_settings", "pricing_rules", "usage_events", "model_aggregates", "api_key_aggregates"} {
+	for _, table := range []string{"billing_settings", "pricing_rules", "usage_events", "api_key_accounts"} {
 		var count int
 		if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
 			t.Fatal(err)
@@ -249,14 +248,14 @@ func TestMaskSensitiveSource(t *testing.T) {
 	}
 }
 
-func TestMissingUpstreamCostIsMarkedUnpriced(t *testing.T) {
+func TestMissingUpstreamCostUsesSavedZeroWithoutInferringPricing(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	store.HandleUsage(UsageRecord{Provider: "unknown", Model: "new-model", InputTokens: 100, OutputTokens: 200, TotalTokens: 300})
 	summary := store.Summary()
-	if len(summary.UnpricedModels) != 1 || summary.UnpricedModels[0] != "new-model" {
+	if len(summary.UnpricedModels) != 0 {
 		t.Fatalf("unpriced models = %v", summary.UnpricedModels)
 	}
 	if summary.Totals.Cost != 0 {

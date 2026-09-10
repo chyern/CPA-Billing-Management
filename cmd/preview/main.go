@@ -30,8 +30,8 @@ func main() {
 			{APIKey: "sk-b••••••test", Requests: 32, FailedRequests: 2, InputTokens: 2_020_000, OutputTokens: 280_000, TotalTokens: 2_300_000, Cost: 4.0284},
 		},
 		RecentEvents: []billing.UsageEvent{
-			{RequestedAt: time.Now().Add(-2 * time.Minute), Provider: "codex", Model: "gpt-5.5", APIKey: "sk-a••••••demo", LatencyNanos: int64(1450 * time.Millisecond), TTFTNanos: int64(320 * time.Millisecond), InputTokens: 18_000, OutputTokens: 2_400, TotalTokens: 20_400, Cost: 0.081},
-			{RequestedAt: time.Now().Add(-7 * time.Minute), Provider: "claude", Model: "claude-sonnet", APIKey: "sk-b••••••test", LatencyNanos: int64(820 * time.Millisecond), TTFTNanos: int64(180 * time.Millisecond), InputTokens: 12_000, OutputTokens: 1_800, TotalTokens: 13_800, Failed: true},
+			{RequestedAt: time.Now().Add(-2 * time.Minute), Provider: "codex", Domain: "codex.example", Currency: "USD", Model: "gpt-5.5", APIKey: "sk-a••••••demo", LatencyNanos: int64(1450 * time.Millisecond), TTFTNanos: int64(320 * time.Millisecond), InputTokens: 18_000, OutputTokens: 2_400, TotalTokens: 20_400, Cost: 0.081},
+			{RequestedAt: time.Now().Add(-7 * time.Minute), Provider: "claude", Domain: "claude.example", Currency: "USD", Model: "claude-sonnet", APIKey: "sk-b••••••test", LatencyNanos: int64(820 * time.Millisecond), TTFTNanos: int64(180 * time.Millisecond), InputTokens: 12_000, OutputTokens: 1_800, TotalTokens: 13_800, Failed: true},
 		},
 		RecentEventsTotal: 42, RecentEventsPage: 1, RecentEventsPages: 3, RecentEventsPageSize: 20,
 	}

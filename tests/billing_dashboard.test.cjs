@@ -7,6 +7,20 @@ const vm = require('node:vm');
 const script = fs.readFileSync(path.join(__dirname, '../internal/dashboard/assets/billing.js'), 'utf8');
 const nextTurn = () => new Promise(resolve => setImmediate(resolve));
 
+test('events display only stored upstream snapshots, without configuration discovery or inference', async () => {
+  const {elements, requests} = loadDashboard();
+  await respond(requests[0], summary({events: [
+    {model: 'new', provider: 'codex', domain: 'saved.example'},
+    {model: 'old', auth_index: 'old-index', source: 'sk-s••••••tail'},
+    {model: 'unsafe', provider: '<img onerror=alert(1)>', domain: 'safe.example'},
+  ]}));
+  const html = elements.get('events').innerHTML;
+  assert.match(html, /codex\(saved.example\)/);
+  assert.match(html, /title="—">—/);
+  assert.doesNotMatch(html, /old-index|sk-s|<img|推断/);
+  assert.equal(requests.length, 1, 'reading history must not fetch current upstream configuration');
+});
+
 function deferred() {
   let resolve, reject;
   const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
@@ -40,7 +54,7 @@ function loadDashboard() {
     return elements.get(id);
   };
   const context = vm.createContext({
-    window: {}, URLSearchParams,
+    window: {}, URLSearchParams, URL,
     document: {
       getElementById: element, querySelectorAll: () => [],
       addEventListener(type, listener) { documentListeners[type] = listener; },
@@ -214,14 +228,9 @@ test('cost help opens and closes inside sortable headers without sorting their t
   }
 });
 
-test('paid wildcard and zero-token priced events do not show an unpriced badge', async () => {
+test('historical model labels do not infer pricing metadata that was not saved', async () => {
   const {elements, requests} = loadDashboard();
-  await respond(requests[0], summary({events: [
-    {model: 'paid wildcard', priced_by: '*', priced: true, cost: 2},
-    {model: 'zero tokens', priced_by: '*', priced: true, cost: 0},
-    {model: 'missing rule', priced_by: '*', priced: false, cost: 0},
-  ]}));
-  const html = elements.get('events').innerHTML;
-  assert.equal((html.match(/未配置模型费用/g) || []).length, 1);
-  assert.match(html, /missing rule <span class="pill">未配置模型费用/);
+  await respond(requests[0], summary({events: [{model: 'zero-cost', cost: 0}]}));
+  assert.match(elements.get('events').innerHTML, /zero-cost/);
+  assert.doesNotMatch(elements.get('events').innerHTML, /未配置模型费用/);
 });

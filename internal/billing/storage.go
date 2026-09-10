@@ -9,7 +9,26 @@ import (
 // EnsureSchema creates the normalized SQLite schema used by the plugin and
 // standalone data tools.
 func EnsureSchema(db *sql.DB) error {
-	_, err := db.Exec(`
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var version int
+	var exists int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='billing_settings'`).Scan(&exists); err != nil {
+		return err
+	}
+	if exists != 0 {
+		err := tx.QueryRow(`SELECT schema_version FROM billing_settings WHERE id=1`).Scan(&version)
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		if err == nil && version != 4 && version != 5 && version != stateVersion {
+			return fmt.Errorf("unsupported billing schema version %d", version)
+		}
+	}
+	_, err = tx.Exec(`
 		CREATE TABLE IF NOT EXISTS billing_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			schema_version INTEGER NOT NULL,
@@ -24,100 +43,23 @@ func EnsureSchema(db *sql.DB) error {
 			cache_read_per_million REAL NOT NULL CHECK (cache_read_per_million >= 0),
 			cache_creation_per_million REAL NOT NULL CHECK (cache_creation_per_million >= 0)
 		);
-		CREATE TABLE IF NOT EXISTS usage_events (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			requested_at TEXT NOT NULL,
-			provider TEXT NOT NULL,
-			model TEXT NOT NULL,
-			alias TEXT NOT NULL DEFAULT '',
-			api_key TEXT NOT NULL DEFAULT '',
-			api_key_id TEXT NOT NULL DEFAULT '',
-			auth_type TEXT NOT NULL DEFAULT '',
-			source TEXT NOT NULL DEFAULT '',
-			latency_ns INTEGER NOT NULL DEFAULT 0,
-			ttft_ns INTEGER NOT NULL DEFAULT 0,
-			failed INTEGER NOT NULL DEFAULT 0 CHECK (failed IN (0, 1)),
-			input_tokens INTEGER NOT NULL DEFAULT 0,
-			output_tokens INTEGER NOT NULL DEFAULT 0,
-			reasoning_tokens INTEGER NOT NULL DEFAULT 0,
-			cached_tokens INTEGER NOT NULL DEFAULT 0,
-			cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-			cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-			total_tokens INTEGER NOT NULL DEFAULT 0,
-			cost REAL NOT NULL DEFAULT 0,
-			priced_by TEXT NOT NULL DEFAULT '',
-			priced INTEGER NOT NULL DEFAULT 0 CHECK (priced IN (0, 1))
-		);
-		CREATE INDEX IF NOT EXISTS idx_usage_events_requested_at ON usage_events(requested_at);
-		CREATE INDEX IF NOT EXISTS idx_usage_events_date_range ON usage_events(rtrim(requested_at, 'Z'));
-		CREATE INDEX IF NOT EXISTS idx_usage_events_status ON usage_events(failed, id);
-		CREATE INDEX IF NOT EXISTS idx_usage_events_provider_model ON usage_events(provider, model);
-		CREATE INDEX IF NOT EXISTS idx_usage_events_api_key_id ON usage_events(api_key_id);
-		CREATE TABLE IF NOT EXISTS model_aggregates (
-			aggregate_key TEXT PRIMARY KEY,
-			provider TEXT NOT NULL,
-			model TEXT NOT NULL,
-			requests INTEGER NOT NULL DEFAULT 0,
-			failed_requests INTEGER NOT NULL DEFAULT 0,
-			input_tokens INTEGER NOT NULL DEFAULT 0,
-			output_tokens INTEGER NOT NULL DEFAULT 0,
-			reasoning_tokens INTEGER NOT NULL DEFAULT 0,
-			cached_tokens INTEGER NOT NULL DEFAULT 0,
-			total_tokens INTEGER NOT NULL DEFAULT 0,
-			cost REAL NOT NULL DEFAULT 0,
-			priced INTEGER NOT NULL DEFAULT 0 CHECK (priced IN (0, 1))
-		);
-		CREATE TABLE IF NOT EXISTS api_key_aggregates (
-			aggregate_key TEXT PRIMARY KEY,
-			api_key TEXT NOT NULL,
-			requests INTEGER NOT NULL DEFAULT 0,
-			failed_requests INTEGER NOT NULL DEFAULT 0,
-			input_tokens INTEGER NOT NULL DEFAULT 0,
-			output_tokens INTEGER NOT NULL DEFAULT 0,
-			reasoning_tokens INTEGER NOT NULL DEFAULT 0,
-			cached_tokens INTEGER NOT NULL DEFAULT 0,
-			total_tokens INTEGER NOT NULL DEFAULT 0,
-			cost REAL NOT NULL DEFAULT 0
-		);
-		CREATE TABLE IF NOT EXISTS api_key_balances (
-			api_key_id TEXT PRIMARY KEY,
-			api_key TEXT NOT NULL,
-			balance REAL NOT NULL,
-			caller_scope TEXT NOT NULL DEFAULT '',
-			updated_at TEXT NOT NULL
-		);
-		CREATE TABLE IF NOT EXISTS api_key_balance_notes (
-			api_key_id TEXT PRIMARY KEY,
-			api_key TEXT NOT NULL DEFAULT '',
-			note TEXT NOT NULL DEFAULT '',
-			updated_at TEXT NOT NULL
-		)
 	`)
 	if err != nil {
-		return fmt.Errorf("initialize normalized billing database: %w", err)
+		return fmt.Errorf("initialize billing database: %w", err)
 	}
-	// CREATE TABLE IF NOT EXISTS does not add columns to an existing database.
-	// Add newer columns in place so upgrades remain usable without data loss.
-	for table, columns := range map[string]map[string]string{
-		"usage_events":     {"priced": "INTEGER NOT NULL DEFAULT 0 CHECK (priced IN (0, 1))"},
-		"api_key_balances": {"caller_scope": "TEXT NOT NULL DEFAULT ''"},
-	} {
-		for column, definition := range columns {
-			var count int
-			if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&count); err != nil {
-				return fmt.Errorf("inspect billing column %s.%s: %w", table, column, err)
-			}
-			if count == 0 {
-				if _, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + definition); err != nil {
-					return fmt.Errorf("add billing column %s.%s: %w", table, column, err)
-				}
-			}
-		}
+	if _, err := tx.Exec(`DROP TABLE IF EXISTS model_aggregates`); err != nil {
+		return err
 	}
-	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_balances_caller_scope ON api_key_balances(caller_scope) WHERE caller_scope <> ''`); err != nil {
-		return fmt.Errorf("initialize billing balance index: %w", err)
+	if err := ensureAccountSchema(tx); err != nil {
+		return err
 	}
-	return nil
+	if err := ensureEventSchemaTx(tx); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE billing_settings SET schema_version=? WHERE id=1`, stateVersion); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) initDatabase() error { return EnsureSchema(s.db) }
@@ -144,9 +86,6 @@ func (s *Store) load() error {
 	if loaded.Events, err = loadEvents(s.db); err != nil {
 		return err
 	}
-	if loaded.Aggregates, err = loadModelAggregates(s.db); err != nil {
-		return err
-	}
 	if loaded.APIKeyAggregates, err = loadAPIKeyAggregates(s.db); err != nil {
 		return err
 	}
@@ -171,9 +110,8 @@ func loadRules(db *sql.DB) ([]PriceRule, error) {
 	return rules, rows.Err()
 }
 
-const eventColumns = `requested_at, provider, model, alias, api_key, api_key_id, auth_type, source,
- latency_ns, ttft_ns, failed, input_tokens, output_tokens, reasoning_tokens,
- cached_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, cost, priced_by, priced`
+const eventColumns = `requested_at, model, provider, domain, api_key, latency_ns, ttft_ns,
+ input_tokens, cached_tokens, output_tokens, cost, currency, failed`
 
 func loadEvents(db *sql.DB) ([]UsageEvent, error) {
 	rows, err := db.Query(`SELECT `+eventColumns+` FROM (SELECT * FROM usage_events ORDER BY id DESC LIMIT ?) ORDER BY id`, maxCachedEvents)
@@ -189,38 +127,20 @@ func scanUsageEvents(rows *sql.Rows) ([]UsageEvent, error) {
 	for rows.Next() {
 		var event UsageEvent
 		var requestedAt string
-		if err := rows.Scan(&requestedAt, &event.Provider, &event.Model, &event.Alias, &event.APIKey, &event.APIKeyID, &event.AuthType, &event.Source, &event.LatencyNanos, &event.TTFTNanos, &event.Failed, &event.InputTokens, &event.OutputTokens, &event.ReasoningTokens, &event.CachedTokens, &event.CacheReadTokens, &event.CacheCreationTokens, &event.TotalTokens, &event.Cost, &event.PricedBy, &event.Priced); err != nil {
+		if err := rows.Scan(&requestedAt, &event.Model, &event.Provider, &event.Domain, &event.APIKey, &event.LatencyNanos, &event.TTFTNanos, &event.InputTokens, &event.CachedTokens, &event.OutputTokens, &event.Cost, &event.Currency, &event.Failed); err != nil {
 			return nil, fmt.Errorf("scan usage event: %w", err)
 		}
 		event.RequestedAt = parseDatabaseTime(requestedAt)
-		event.Source = MaskSensitiveSource(event.Source)
+		event.TotalTokens = event.InputTokens + event.OutputTokens
+		event.Priced = true
+
 		events = append(events, event)
 	}
 	return events, rows.Err()
 }
 
-func loadModelAggregates(db *sql.DB) (map[string]*Aggregate, error) {
-	rows, err := db.Query(`SELECT aggregate_key, provider, model, requests, failed_requests, input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, cost, priced FROM model_aggregates`)
-	if err != nil {
-		return nil, fmt.Errorf("load model aggregates: %w", err)
-	}
-	defer rows.Close()
-	result := map[string]*Aggregate{}
-	for rows.Next() {
-		var key string
-		var priced int
-		var aggregate Aggregate
-		if err := rows.Scan(&key, &aggregate.Provider, &aggregate.Model, &aggregate.Requests, &aggregate.FailedRequests, &aggregate.InputTokens, &aggregate.OutputTokens, &aggregate.ReasoningTokens, &aggregate.CachedTokens, &aggregate.TotalTokens, &aggregate.Cost, &priced); err != nil {
-			return nil, fmt.Errorf("scan model aggregate: %w", err)
-		}
-		aggregate.Priced = priced != 0
-		result[key] = &aggregate
-	}
-	return result, rows.Err()
-}
-
 func loadAPIKeyAggregates(db *sql.DB) (map[string]*APIKeyAggregate, error) {
-	rows, err := db.Query(`SELECT aggregate_key, api_key, requests, failed_requests, input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, cost FROM api_key_aggregates`)
+	rows, err := db.Query(`SELECT api_key_id, api_key, requests, cost FROM api_key_accounts WHERE requests <> 0 OR cost <> 0`)
 	if err != nil {
 		return nil, fmt.Errorf("load API key aggregates: %w", err)
 	}
@@ -229,7 +149,7 @@ func loadAPIKeyAggregates(db *sql.DB) (map[string]*APIKeyAggregate, error) {
 	for rows.Next() {
 		var key string
 		var aggregate APIKeyAggregate
-		if err := rows.Scan(&key, &aggregate.APIKey, &aggregate.Requests, &aggregate.FailedRequests, &aggregate.InputTokens, &aggregate.OutputTokens, &aggregate.ReasoningTokens, &aggregate.CachedTokens, &aggregate.TotalTokens, &aggregate.Cost); err != nil {
+		if err := rows.Scan(&key, &aggregate.APIKey, &aggregate.Requests, &aggregate.Cost); err != nil {
 			return nil, fmt.Errorf("scan API key aggregate: %w", err)
 		}
 		result[key] = &aggregate

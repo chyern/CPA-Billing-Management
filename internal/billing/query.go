@@ -43,19 +43,9 @@ func (s *Store) SummaryPageRangeStatus(page, pageSize int, start, end time.Time,
 	}
 	page, pageSize = normalizePage(page, pageSize)
 	where, args := eventDateWhere(start, end)
-	var models []*Aggregate
-	var apiKeys []*APIKeyAggregate
-	var totals Totals
-	var unpriced []string
-	if start.IsZero() && end.IsZero() {
-		models, totals, unpriced = s.modelSummaryLocked()
-		apiKeys = s.apiKeySummaryLocked()
-	} else {
-		var err error
-		models, apiKeys, totals, unpriced, err = s.summarizeDateRangeLocked(where, args)
-		if err != nil {
-			return Summary{}, err
-		}
+	models, apiKeys, totals, unpriced, err := s.summarizeDateRangeLocked(where, args)
+	if err != nil {
+		return Summary{}, err
 	}
 	if status != "all" {
 		where += " AND failed = ?"
@@ -105,8 +95,8 @@ func eventDateWhere(start, end time.Time) (string, []any) {
 }
 
 func (s *Store) summarizeDateRangeLocked(where string, args []any) ([]*Aggregate, []*APIKeyAggregate, Totals, []string, error) {
-	const sums = `COUNT(*), SUM(failed), SUM(input_tokens), SUM(output_tokens), SUM(reasoning_tokens), SUM(cached_tokens), SUM(total_tokens), SUM(cost)`
-	rows, err := s.db.Query(`SELECT provider, model, `+sums+`, MIN(priced) FROM usage_events`+where+` GROUP BY lower(trim(provider)),lower(trim(model)) ORDER BY SUM(cost) DESC,provider,model`, args...)
+	const sums = `COUNT(*), SUM(failed), SUM(input_tokens), SUM(output_tokens), 0, SUM(cached_tokens), SUM(input_tokens + output_tokens), SUM(cost)`
+	rows, err := s.db.Query(`SELECT provider, model, `+sums+`, 1 FROM usage_events`+where+` GROUP BY lower(trim(provider)),lower(trim(model)) ORDER BY SUM(cost) DESC,provider,model`, args...)
 	if err != nil {
 		return nil, nil, Totals{}, nil, fmt.Errorf("summarize usage models: %w", err)
 	}
@@ -144,23 +134,30 @@ func (s *Store) summarizeDateRangeLocked(where string, args []any) ([]*Aggregate
 		unpriced = append(unpriced, model)
 	}
 	sort.Strings(unpriced)
-	rows, err = s.db.Query(`SELECT api_key, `+sums+` FROM usage_events`+where+` GROUP BY api_key_id ORDER BY COUNT(*) DESC,api_key`, args...)
+	keys, err := s.summarizeAPIKeysLocked(where, args)
+	return models, keys, totals, unpriced, err
+}
+
+func (s *Store) summarizeAPIKeysLocked(where string, args []any) ([]*APIKeyAggregate, error) {
+	rows, err := s.db.Query(`SELECT api_key, COUNT(*), SUM(failed), SUM(input_tokens), SUM(output_tokens),
+      SUM(cached_tokens), SUM(input_tokens + output_tokens), SUM(cost)
+      FROM usage_events`+where+` GROUP BY api_key ORDER BY COUNT(*) DESC,api_key`, args...)
 	if err != nil {
-		return nil, nil, Totals{}, nil, fmt.Errorf("summarize usage API keys: %w", err)
+		return nil, fmt.Errorf("summarize usage API keys: %w", err)
 	}
 	defer rows.Close()
 	keys := make([]*APIKeyAggregate, 0)
 	for rows.Next() {
 		var a APIKeyAggregate
-		if err := rows.Scan(&a.APIKey, &a.Requests, &a.FailedRequests, &a.InputTokens, &a.OutputTokens, &a.ReasoningTokens, &a.CachedTokens, &a.TotalTokens, &a.Cost); err != nil {
-			return nil, nil, Totals{}, nil, fmt.Errorf("scan usage API key summary: %w", err)
+		if err := rows.Scan(&a.APIKey, &a.Requests, &a.FailedRequests, &a.InputTokens, &a.OutputTokens, &a.CachedTokens, &a.TotalTokens, &a.Cost); err != nil {
+			return nil, err
 		}
 		if strings.TrimSpace(a.APIKey) == "" {
 			a.APIKey = "未提供"
 		}
 		keys = append(keys, &a)
 	}
-	return models, keys, totals, unpriced, rows.Err()
+	return keys, rows.Err()
 }
 
 func summarizeEvents(events []UsageEvent) ([]*Aggregate, []*APIKeyAggregate, Totals, []string) {
@@ -196,7 +193,7 @@ func summarizeEvents(events []UsageEvent) ([]*Aggregate, []*APIKeyAggregate, Tot
 		if !priced {
 			unpriced[event.Model] = struct{}{}
 		}
-		keyID := event.APIKeyID
+		keyID := event.APIKey
 		keyAggregate := keysByID[keyID]
 		if keyAggregate == nil {
 			label := event.APIKey
@@ -256,49 +253,6 @@ func normalizePage(page, pageSize int) (int, int) {
 		page = 1
 	}
 	return page, pageSize
-}
-
-func (s *Store) modelSummaryLocked() ([]*Aggregate, Totals, []string) {
-	models := make([]*Aggregate, 0, len(s.state.Aggregates))
-	var totals Totals
-	unpriced := make(map[string]struct{})
-	for _, aggregate := range s.state.Aggregates {
-		copy := *aggregate
-		models = append(models, &copy)
-		totals.Requests += aggregate.Requests
-		totals.FailedRequests += aggregate.FailedRequests
-		totals.InputTokens += aggregate.InputTokens
-		totals.OutputTokens += aggregate.OutputTokens
-		totals.ReasoningTokens += aggregate.ReasoningTokens
-		totals.CachedTokens += aggregate.CachedTokens
-		totals.TotalTokens += aggregate.TotalTokens
-		totals.Cost += aggregate.Cost
-		if !aggregate.Priced {
-			unpriced[aggregate.Model] = struct{}{}
-		}
-	}
-	sort.Slice(models, func(i, j int) bool { return models[i].Cost > models[j].Cost })
-	unpricedModels := make([]string, 0, len(unpriced))
-	for model := range unpriced {
-		unpricedModels = append(unpricedModels, model)
-	}
-	sort.Strings(unpricedModels)
-	return models, totals, unpricedModels
-}
-
-func (s *Store) apiKeySummaryLocked() []*APIKeyAggregate {
-	apiKeys := make([]*APIKeyAggregate, 0, len(s.state.APIKeyAggregates))
-	for _, aggregate := range s.state.APIKeyAggregates {
-		copy := *aggregate
-		apiKeys = append(apiKeys, &copy)
-	}
-	sort.Slice(apiKeys, func(i, j int) bool {
-		if apiKeys[i].Requests == apiKeys[j].Requests {
-			return apiKeys[i].APIKey < apiKeys[j].APIKey
-		}
-		return apiKeys[i].Requests > apiKeys[j].Requests
-	})
-	return apiKeys
 }
 
 func paginateEvents(all []UsageEvent, page, pageSize int) ([]UsageEvent, int, int) {

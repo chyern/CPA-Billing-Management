@@ -873,6 +873,20 @@ td.num {
   letter-spacing: 0.03em;
 }
 
+.event-upstream {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 220px;
+}
+
+.event-upstream-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
 /* Dual metric column */
 .dual-metric {
   display: inline-flex;

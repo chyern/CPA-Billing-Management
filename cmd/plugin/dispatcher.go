@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"gopkg.in/yaml.v3"
 	"net/http"
+	"strings"
 
 	"github.com/chyern/CPA-Billing-Management/internal/abi"
 )
@@ -56,9 +58,16 @@ func handleLifecycle(request []byte) ([]byte, error) {
 			return nil, fmt.Errorf("decode lifecycle request: %w", err)
 		}
 	}
+	var config struct {
+		HostConfigPath string `yaml:"cpa_host_config_path"`
+	}
+	if err := yaml.Unmarshal(lifecycle.ConfigYAML, &config); err != nil {
+		return nil, fmt.Errorf("decode plugin configuration: %w", err)
+	}
 	if _, err := configureBillingStore(configuredDataDir(lifecycle.ConfigYAML), lifecycle.ConfigYAML); err != nil {
 		return nil, err
 	}
+	hostConfigPath = strings.TrimSpace(config.HostConfigPath)
 	return okEnvelope(registration())
 }
 
@@ -72,6 +81,7 @@ func registration() abi.Registration {
 			GitHubRepository: "https://github.com/chyern/CPA-Billing-Management",
 			ConfigFields: []abi.ConfigField{
 				{Name: "currency", Type: "string", Description: "费用展示币种，默认 USD；事件未携带币种时使用此值。"},
+				{Name: "cpa_host_config_path", Type: "string", Description: "CLIProxyAPI 主配置文件绝对路径；用于新事件按凭据标识保存上游域名，留空或无法匹配时上游留空。"},
 				{Name: "cpa_billing_data_dir", Type: "string", Description: "cpa_billing_data_dir：SQLite 账单数据库目录；留空时使用插件安装目录。"},
 			},
 		},
