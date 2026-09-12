@@ -48,12 +48,12 @@ func TestStoredSnapshotDoesNotFollowConfigOrPriceChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := []byte(`{"Provider":"codex","Model":"test","AuthIndex":"930912adea2ad812","Source":"test-key","ActualCost":2}`)
+	raw := []byte(`{"Provider":"codex","Model":"test","ReasoningEffort":"high","AuthIndex":"930912adea2ad812","Source":"test-key","ActualCost":2}`)
 	if err := handleUsage(s, raw); err != nil {
 		t.Fatal(err)
 	}
 	before := s.Summary().RecentEvents[0]
-	if before.Domain != "two.example" || before.Currency != "USD" {
+	if before.Domain != "two.example" || before.Currency != "USD" || before.ReasoningEffort != "high" {
 		t.Fatalf("snapshot=%+v", before)
 	}
 	if err := os.WriteFile(config, []byte("codex-api-key: []"), 0600); err != nil {
@@ -74,7 +74,7 @@ func TestStoredSnapshotDoesNotFollowConfigOrPriceChanges(t *testing.T) {
 	}
 	defer s.Close()
 	after := s.Summary().RecentEvents[0]
-	if after.Domain != before.Domain || after.Provider != before.Provider || after.Cost != 2 || after.Currency != "USD" {
+	if after.Domain != before.Domain || after.Provider != before.Provider || after.Cost != 2 || after.Currency != "USD" || after.ReasoningEffort != "high" {
 		t.Fatalf("saved snapshot changed: %+v", after)
 	}
 	if err := handleUsage(s, raw); err != nil {

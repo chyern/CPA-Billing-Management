@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	stateVersion    = 6
+	stateVersion    = 7
 	maxCachedEvents = 10000
 	defaultCurrency = "USD"
 )

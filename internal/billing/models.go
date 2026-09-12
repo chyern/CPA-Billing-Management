@@ -21,6 +21,7 @@ type UsageRecord struct {
 	Provider            string
 	ExecutorType        string
 	Model               string
+	ReasoningEffort     string
 	Alias               string
 	APIKey              string
 	AuthID              string
@@ -49,6 +50,7 @@ type UsageEvent struct {
 	RequestedAt         time.Time `json:"requested_at"`
 	Provider            string    `json:"provider,omitempty"`
 	Model               string    `json:"model"`
+	ReasoningEffort     string    `json:"reasoning_effort,omitempty"`
 	Alias               string    `json:"-"`
 	APIKey              string    `json:"api_key,omitempty"`
 	APIKeyID            string    `json:"-"`

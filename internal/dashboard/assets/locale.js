@@ -2,6 +2,7 @@
   const languageKey = 'cli-proxy-language';
   const translations = {
     en: {
+      '思考强度': 'Reasoning effort',
       'cpa-billing-management': 'CPA Billing Management', '费用统计': 'Billing Statistics', '模型费用': 'Model Pricing', '密钥余额': 'Key Balances',
       'CPA 费用统计': 'CPA Billing Statistics', 'CPA 模型费用': 'CPA Model Pricing', 'CPA 密钥余额': 'CPA Key Balances',
       '模型': 'Model', '上游': 'Upstream', '未知上游': 'Unknown upstream',
@@ -39,6 +40,7 @@
       '搜索 Key 或备注...': 'Search Key or note...', '默认兜底': 'Default fallback', '未找到匹配项': 'No matching items found', '失败率': 'Failure rate',
     },
     'zh-TW': {
+      '思考强度': '思考強度',
       'cpa-billing-management': 'CPA 帳務管理', '费用统计': '費用統計', '模型费用': '模型費用', '密钥余额': '金鑰餘額',
       'CPA 费用统计': 'CPA 費用統計', 'CPA 模型费用': 'CPA 模型費用', 'CPA 密钥余额': 'CPA 金鑰餘額', '自动刷新': '自動重新整理', '不刷新': '不重新整理',
       '模型': '模型', '上游': '上游', '未知上游': '未知上游',
@@ -53,6 +55,7 @@
       '已更新': '已更新', '暂无 usage 事件': '暫無 usage 事件', '暂无 API Key 数据': '暫無 API Key 資料', ['暂无' + '最近' + '事件']: '暫無' + '最近' + '事件',
     },
     ru: {
+      '思考强度': 'Уровень рассуждения',
       'cpa-billing-management': 'Управление биллингом CPA', '费用统计': 'Статистика расходов', '模型费用': 'Цены моделей', '密钥余额': 'Баланс ключей',
       'CPA 费用统计': 'Статистика расходов CPA', 'CPA 模型费用': 'Цены моделей CPA', 'CPA 密钥余额': 'Баланс ключей CPA', '自动刷新': 'Автообновление', '不刷新': 'Выкл.',
       '模型': 'Модель', '上游': 'Провайдер', '未知上游': 'Неизвестный сервер',

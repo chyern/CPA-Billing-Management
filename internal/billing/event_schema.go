@@ -10,6 +10,7 @@ const eventSchema = `(
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  requested_at TEXT NOT NULL,
  model TEXT NOT NULL,
+ reasoning_effort TEXT NOT NULL DEFAULT '',
  provider TEXT NOT NULL DEFAULT '',
  domain TEXT NOT NULL DEFAULT '',
  api_key TEXT NOT NULL DEFAULT '',
@@ -62,7 +63,7 @@ func ensureEventSchemaTx(tx *sql.Tx) error {
 		if err != nil && err != sql.ErrNoRows {
 			return err
 		}
-		if err == nil && version != 4 && version != 5 && version != stateVersion {
+		if err == nil && version != 4 && version != 5 && version != 6 && version != stateVersion {
 			return fmt.Errorf("unsupported billing schema version %d", version)
 		}
 		if _, err = tx.Exec(`CREATE TABLE usage_events_snapshot ` + eventSchema); err != nil {
@@ -92,13 +93,13 @@ func migrateEventSnapshots(tx *sql.Tx, columns map[string]bool) error {
 		}
 		return "''"
 	}
-	rows, err := tx.Query(`SELECT id, requested_at, model, ` + column("upstream") + `, ` + column("provider") + `, ` + column("domain") + `, api_key,
+	rows, err := tx.Query(`SELECT id, requested_at, model, ` + column("reasoning_effort") + `, ` + column("upstream") + `, ` + column("provider") + `, ` + column("domain") + `, api_key,
         latency_ns, ttft_ns, input_tokens, cached_tokens, output_tokens, cost, ` + column("currency") + `, failed FROM usage_events ORDER BY id`)
 	if err != nil {
 		return fmt.Errorf("read event snapshots for migration: %w", err)
 	}
 	defer rows.Close()
-	insert, err := tx.Prepare(`INSERT INTO usage_events_snapshot (id, ` + eventColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	insert, err := tx.Prepare(`INSERT INTO usage_events_snapshot (id, ` + eventColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -107,7 +108,7 @@ func migrateEventSnapshots(tx *sql.Tx, columns map[string]bool) error {
 		var id int64
 		var requestedAt, combined string
 		var event UsageEvent
-		if err := rows.Scan(&id, &requestedAt, &event.Model, &combined, &event.Provider, &event.Domain, &event.APIKey,
+		if err := rows.Scan(&id, &requestedAt, &event.Model, &event.ReasoningEffort, &combined, &event.Provider, &event.Domain, &event.APIKey,
 			&event.LatencyNanos, &event.TTFTNanos, &event.InputTokens, &event.CachedTokens, &event.OutputTokens, &event.Cost, &event.Currency, &event.Failed); err != nil {
 			return err
 		}
@@ -121,7 +122,7 @@ func migrateEventSnapshots(tx *sql.Tx, columns map[string]bool) error {
 				event.Provider, event.Domain = combined[:index], combined[index+1:len(combined)-1]
 			}
 		}
-		if _, err := insert.Exec(id, requestedAt, event.Model, event.Provider, event.Domain, event.APIKey,
+		if _, err := insert.Exec(id, requestedAt, event.Model, event.ReasoningEffort, event.Provider, event.Domain, event.APIKey,
 			event.LatencyNanos, event.TTFTNanos, event.InputTokens, event.CachedTokens, event.OutputTokens, event.Cost, event.Currency, event.Failed); err != nil {
 			return err
 		}

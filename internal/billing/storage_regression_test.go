@@ -34,7 +34,7 @@ func TestSnapshotUpgradePreservesVisibleHistoryAndDropsInternalFields(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`ALTER TABLE usage_events ADD COLUMN auth_index TEXT DEFAULT 'old-index'; ALTER TABLE usage_events ADD COLUMN source TEXT DEFAULT 'old-source'; ALTER TABLE usage_events ADD COLUMN upstream TEXT DEFAULT ''; ALTER TABLE usage_events DROP COLUMN provider; ALTER TABLE usage_events DROP COLUMN domain`); err != nil {
+	if _, err := db.Exec(`UPDATE billing_settings SET schema_version=6; ALTER TABLE usage_events DROP COLUMN reasoning_effort; ALTER TABLE usage_events ADD COLUMN auth_index TEXT DEFAULT 'old-index'; ALTER TABLE usage_events ADD COLUMN source TEXT DEFAULT 'old-source'; ALTER TABLE usage_events ADD COLUMN upstream TEXT DEFAULT ''; ALTER TABLE usage_events DROP COLUMN provider; ALTER TABLE usage_events DROP COLUMN domain`); err != nil {
 		t.Fatal(err)
 	}
 	_ = db.Close()
@@ -45,7 +45,7 @@ func TestSnapshotUpgradePreservesVisibleHistoryAndDropsInternalFields(t *testing
 	if summary := s.Summary(); summary.Totals.Cost != 2 || summary.RecentEvents[0].AuthIndex != "" {
 		t.Fatalf("upgrade changed history: %+v", summary)
 	}
-	mustUsage(t, s, UsageRecord{Provider: "codex", Model: "new", AuthIndex: "credential-index", Domain: "original.example", Cost: 3, CostProvided: true})
+	mustUsage(t, s, UsageRecord{Provider: "codex", Model: "new", ReasoningEffort: "high", AuthIndex: "credential-index", Domain: "original.example", Cost: 3, CostProvided: true})
 	_ = s.Close()
 	s, err = NewStore(dir)
 	if err != nil {
@@ -56,8 +56,8 @@ func TestSnapshotUpgradePreservesVisibleHistoryAndDropsInternalFields(t *testing
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('usage_events')`).Scan(&columns); err != nil {
 		t.Fatal(err)
 	}
-	if columns != 14 {
-		t.Fatalf("event table contains %d columns, want ID plus 13 display values (including the fee currency)", columns)
+	if columns != 15 {
+		t.Fatalf("event table contains %d columns, want ID plus 14 display values (including the fee currency)", columns)
 	}
 	var internal int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('usage_events') WHERE name IN ('auth_index', 'source', 'api_key_id', 'upstream', 'total_tokens', 'priced_by')`).Scan(&internal); err != nil {
@@ -67,7 +67,7 @@ func TestSnapshotUpgradePreservesVisibleHistoryAndDropsInternalFields(t *testing
 		t.Fatal("internal event fields survived migration")
 	}
 	summary := s.Summary()
-	if summary.Totals.Cost != 5 || len(summary.RecentEvents) != 2 || summary.RecentEvents[1].Provider != "codex" || summary.RecentEvents[1].Domain != "original.example" || summary.RecentEvents[1].AuthIndex != "" || summary.RecentEvents[0].Domain != "" || summary.RecentEvents[0].Provider != "" {
+	if summary.Totals.Cost != 5 || len(summary.RecentEvents) != 2 || summary.RecentEvents[1].Provider != "codex" || summary.RecentEvents[1].Domain != "original.example" || summary.RecentEvents[1].AuthIndex != "" || summary.RecentEvents[0].Domain != "" || summary.RecentEvents[0].Provider != "" || summary.RecentEvents[0].ReasoningEffort != "" || summary.RecentEvents[1].ReasoningEffort != "high" {
 		t.Fatalf("snapshot changed after restart: %+v", summary)
 	}
 }

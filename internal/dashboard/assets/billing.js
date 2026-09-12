@@ -241,10 +241,11 @@ function renderEvents() {
   const emptyView = '<div class="empty"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><div class="empty-title">暂无最近事件</div><div class="empty-desc">最近处理的 API 请求事件会实时出现在这里</div></div>';
 
   const eventTable = events.length
-      ? '<div class="table-responsive"><table><thead><tr><th>时间</th><th>模型</th><th>上游</th><th>API Key</th><th class="num">耗时/首字</th><th class="num">输入/缓存</th><th class="num">输出</th><th class="num">费用 ' + costHelp + '</th><th>状态</th></tr></thead><tbody>'
+      ? '<div class="table-responsive"><table><thead><tr><th>时间</th><th>模型</th><th>思考强度</th><th>上游</th><th>API Key</th><th class="num">耗时/首字</th><th class="num">输入/缓存</th><th class="num">输出</th><th class="num">费用 ' + costHelp + '</th><th>状态</th></tr></thead><tbody>'
       + events.map(event => '<tr>'
         + '<td>' + escapeHTML(new Date(event.requested_at).toLocaleString()) + '</td>'
         + '<td>' + escapeHTML(event.model || '-') + '</td>'
+        + '<td>' + escapeHTML(event.reasoning_effort || '—') + '</td>'
         + '<td>' + renderUpstream(event) + '</td>'
         + '<td><div class="code-tag-wrap"><span class="code-tag">' + escapeHTML(event.api_key || '-') + '</span>' + (event.api_key ? '<button type="button" class="copy-btn" data-copy="' + escapeHTML(event.api_key) + '" title="复制 API Key" aria-label="复制 API Key"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>' : '') + '</div></td>'
         + '<td class="num"><div class="dual-metric"><span class="dual-metric-primary">' + formatDuration(event.latency_ns) + '</span><span class="dual-metric-secondary">首字 ' + formatDuration(event.ttft_ns) + '</span></div></td>'

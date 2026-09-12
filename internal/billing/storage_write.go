@@ -168,8 +168,8 @@ func writeSettings(tx *sql.Tx, state State) error {
 }
 
 func insertEvent(tx *sql.Tx, event UsageEvent) error {
-	_, err := tx.Exec(`INSERT INTO usage_events (`+eventColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		event.RequestedAt.Format(time.RFC3339Nano), event.Model, event.Provider, event.Domain, event.APIKey,
+	_, err := tx.Exec(`INSERT INTO usage_events (`+eventColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		event.RequestedAt.Format(time.RFC3339Nano), event.Model, event.ReasoningEffort, event.Provider, event.Domain, event.APIKey,
 		event.LatencyNanos, event.TTFTNanos, event.InputTokens, event.CachedTokens, event.OutputTokens, event.Cost, event.Currency, event.Failed)
 	if err != nil {
 		return fmt.Errorf("insert usage event: %w", err)

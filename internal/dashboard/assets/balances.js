@@ -157,6 +157,14 @@ function renderCards() {
   }).join('');
 }
 
+function hasBalanceChanges(item) {
+  if (item.pending) return true;
+  if (item._draftNote !== undefined && item._draftNote.trim() !== (item.note || '')) return true;
+  if (item._draftBalance === undefined) return false;
+  const value = String(item._draftBalance).trim();
+  return value === '' ? Boolean(item.configured) : !item.configured || Number(value) !== Number(item.balance);
+}
+
 function renderBalances() {
   let displayBalances = balances;
   if (balanceSearchQuery) {
@@ -189,7 +197,7 @@ function renderBalances() {
       + '<td class="num">' + formatMoney(item.cost) + '</td>'
       + '<td class="num balance-cell"><input class="balance-input" data-id="' + itemID + '" type="number" min="0" step="0.000001" placeholder="不跟踪" value="' + escapeHTML(value) + '"></td>'
       + '<td class="status-cell">' + status + '</td>'
-      + '<td class="actions-cell"><button class="btn primary btn-sm row-save" data-id="' + itemID + '">保存</button><button class="btn danger btn-sm row-delete" data-id="' + itemID + '"' + (item.pending ? ' disabled' : '') + '>删除</button></td></tr>';
+      + '<td class="actions-cell"><button class="btn primary btn-sm row-save" data-id="' + itemID + '"' + (hasBalanceChanges(item) ? '' : ' disabled') + '>保存</button><button class="btn danger btn-sm row-delete" data-id="' + itemID + '"' + (item.pending ? ' disabled' : '') + '>删除</button></td></tr>';
   }).join('');
 
   const emptyView = '<div class="empty"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><div class="empty-title">' + (balanceSearchQuery ? '未找到匹配项' : '暂无 API Key') + '</div><div class="empty-desc">仅显示 CLIProxyAPI 当前配置的 API Key。配置客户端密钥或产生 usage 事件后会显示在这里。</div></div>';
@@ -362,7 +370,7 @@ document.getElementById('balances').addEventListener('click', async event => {
   const saveButton = event.target.closest('.row-save');
   const deleteButton = event.target.closest('.row-delete');
   const button = saveButton || deleteButton;
-  if (!button) return;
+  if (!button || button.disabled) return;
   const id = button.dataset.id;
   if (deleteButton) {
     const item = balances.find(candidate => candidate.api_key_id === id);
@@ -392,6 +400,8 @@ document.getElementById('balances').addEventListener('input', event => {
     if (item._expectedBalanceVersion === undefined) item._expectedBalanceVersion = item.balance_version || '';
     item._draftBalance = input.value;
   } else item.api_key_value = input.value;
+  const saveButton = document.querySelector('.row-save[data-id="' + item.api_key_id + '"]');
+  if (saveButton) saveButton.disabled = !hasBalanceChanges(item);
 });
 
 document.addEventListener('click', event => {

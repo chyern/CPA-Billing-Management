@@ -10,12 +10,15 @@ const nextTurn = () => new Promise(resolve => setImmediate(resolve));
 test('events display only stored upstream snapshots, without configuration discovery or inference', async () => {
   const {elements, requests} = loadDashboard();
   await respond(requests[0], summary({events: [
-    {model: 'new', provider: 'codex', domain: 'saved.example'},
+    {model: 'new', reasoning_effort: 'high', provider: 'codex', domain: 'saved.example'},
     {model: 'old', auth_index: 'old-index', source: 'sk-s••••••tail'},
-    {model: 'unsafe', provider: '<img onerror=alert(1)>', domain: 'safe.example'},
+    {model: 'unsafe', reasoning_effort: '<img onerror=alert(1)>', provider: '<img onerror=alert(1)>', domain: 'safe.example'},
   ]}));
   const html = elements.get('events').innerHTML;
   assert.match(html, /codex\(saved.example\)/);
+  assert.match(html, /<th>模型<\/th><th>思考强度<\/th><th>上游<\/th>/);
+  assert.match(html, /<td>new<\/td><td>high<\/td>/);
+  assert.match(html, /<td>old<\/td><td>—<\/td>/);
   assert.match(html, /title="—">—/);
   assert.doesNotMatch(html, /old-index|sk-s|<img|推断/);
   assert.equal(requests.length, 1, 'reading history must not fetch current upstream configuration');
