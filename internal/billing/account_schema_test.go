@@ -220,7 +220,7 @@ func TestAccountStatisticsResetPreservesFundsAndNotes(t *testing.T) {
 	}
 }
 
-func TestModelPageIdentityKeepsProviderAndModelSeparate(t *testing.T) {
+func TestModelPageIdentityIgnoresProviderAndNormalizesModel(t *testing.T) {
 	dir := t.TempDir()
 	s, err := NewStore(dir)
 	if err != nil {
@@ -229,7 +229,7 @@ func TestModelPageIdentityKeepsProviderAndModelSeparate(t *testing.T) {
 	for _, record := range []UsageRecord{
 		{Provider: "a/b", Model: "c", Cost: 1, CostProvided: true},
 		{Provider: "a", Model: "b/c", Cost: 2, CostProvided: true},
-		{Provider: " A/B ", Model: "C", Cost: 3, CostProvided: true},
+		{Provider: "different-provider", Model: " C ", Cost: 3, CostProvided: true},
 	} {
 		if err := s.HandleUsage(record); err != nil {
 			t.Fatal(err)
@@ -247,7 +247,7 @@ func TestModelPageIdentityKeepsProviderAndModelSeparate(t *testing.T) {
 	if len(sum.Models) != 2 || sum.Totals.Requests != 3 || sum.Totals.Cost != 6 {
 		t.Fatalf("model identities=%+v", sum)
 	}
-	if sum.Models[0].Provider != "a/b" || sum.Models[0].Requests != 2 || sum.Models[0].Cost != 4 {
+	if sum.Models[0].Provider != "" || sum.Models[0].Requests != 2 || sum.Models[0].Cost != 4 {
 		t.Fatalf("case-insensitive model=%+v", sum.Models[0])
 	}
 }

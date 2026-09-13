@@ -24,7 +24,7 @@ const eventSchema = `(
 
 // This table is the immutable dashboard row, not the original usage payload.
 // Rebuild older schemas transactionally, preserving row IDs and visible values.
-// Never infer an upstream for records that did not already store a snapshot.
+// Removed upstream columns are discarded during migration.
 func ensureEventSchemaTx(tx *sql.Tx) error {
 	var err error
 	if _, err = tx.Exec(`CREATE TABLE IF NOT EXISTS usage_events ` + eventSchema); err != nil {
@@ -61,7 +61,7 @@ func ensureEventSchemaTx(tx *sql.Tx) error {
 		if err != nil && err != sql.ErrNoRows {
 			return err
 		}
-		if err == nil && version != 4 && version != 5 && version != 6 && version != stateVersion {
+		if err == nil && version != 4 && version != 5 && version != 6 && version != 7 && version != stateVersion {
 			return fmt.Errorf("unsupported billing schema version %d", version)
 		}
 		if _, err = tx.Exec(`CREATE TABLE usage_events_snapshot ` + eventSchema); err != nil {
@@ -83,7 +83,7 @@ func ensureEventSchemaTx(tx *sql.Tx) error {
 	return nil
 }
 
-// Split only a value already saved in the row; never consult current config.
+// Copy retained snapshot fields without consulting current configuration.
 func migrateEventSnapshots(tx *sql.Tx, columns map[string]bool) error {
 	column := func(name string) string {
 		if columns[name] {
@@ -96,7 +96,7 @@ func migrateEventSnapshots(tx *sql.Tx, columns map[string]bool) error {
 		return fmt.Errorf("read event snapshots for migration: %w", err)
 	}
 	defer rows.Close()
-	insert, err := tx.Prepare(`INSERT INTO usage_events_snapshot (id, ` + eventColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	insert, err := tx.Prepare(`INSERT INTO usage_events_snapshot (id, ` + eventColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}

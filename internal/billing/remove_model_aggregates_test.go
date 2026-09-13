@@ -41,8 +41,8 @@ func TestRemoveModelAggregatesUsesOnlySnapshots(t *testing.T) {
 	if !reflect.DeepEqual(all.Models, ranged.Models) || all.Totals != ranged.Totals {
 		t.Fatal("all-time and date query disagree")
 	}
-	if len(all.Models) != 2 || all.Models[1].Provider != "" {
-		t.Fatalf("provider inferred: %+v", all.Models)
+	if len(all.Models) != 1 || all.Models[0].Requests != 2 || all.Models[0].Cost != 8 {
+		t.Fatalf("model snapshots did not merge: %+v", all.Models)
 	}
 	if !reflect.DeepEqual(before.RecentEvents, all.RecentEvents) {
 		t.Fatal("migration changed snapshot")

@@ -118,7 +118,7 @@ func persistedDatabaseText(t *testing.T, store *Store) string {
 	queries := []string{
 		`SELECT currency FROM billing_settings`,
 		`SELECT match FROM pricing_rules`,
-		`SELECT model || ' ' || provider || ' ' || domain || ' ' || api_key FROM usage_events`,
+		`SELECT model || ' ' || reasoning_effort || ' ' || api_key FROM usage_events`,
 		`SELECT api_key FROM api_key_accounts`,
 	}
 	var values []string
