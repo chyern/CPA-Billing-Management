@@ -96,7 +96,7 @@ func eventDateWhere(start, end time.Time) (string, []any) {
 
 func (s *Store) summarizeDateRangeLocked(where string, args []any) ([]*Aggregate, []*APIKeyAggregate, Totals, []string, error) {
 	const sums = `COUNT(*), SUM(failed), SUM(input_tokens), SUM(output_tokens), 0, SUM(cached_tokens), SUM(input_tokens + output_tokens), SUM(cost)`
-	rows, err := s.db.Query(`SELECT provider, model, `+sums+`, 1 FROM usage_events`+where+` GROUP BY lower(trim(provider)),lower(trim(model)) ORDER BY SUM(cost) DESC,provider,model`, args...)
+	rows, err := s.db.Query(`SELECT '', model, `+sums+`, 1 FROM usage_events`+where+` GROUP BY lower(trim(model)) ORDER BY SUM(cost) DESC,model`, args...)
 	if err != nil {
 		return nil, nil, Totals{}, nil, fmt.Errorf("summarize usage models: %w", err)
 	}

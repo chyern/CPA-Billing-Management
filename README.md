@@ -10,7 +10,7 @@ CLIProxyAPI 自定义插件：接收 usage 事件，优先使用上游金额，�
 - 费用在 usage 事件写入时计算并固化，后续修改模型价格只影响新事件，不会联动修改历史费用；
 - 支持模型名、alias 和 `*` 通配价格规则；
 - 按页面职责使用 SQLite 表持久化设置、价格规则、usage 快照、模型累计统计和密钥账户；数据库文件为数据目录下的 `billing.db`，默认目录是插件动态库所在的安装目录；
-- 在 CLIProxyAPI 管理页增加“费用统计”菜单，展示总费用、按模型汇总、按脱敏 API Key 汇总，以及最近请求的思考强度、上游、总耗时和首 Token 耗时；最近事件直接展示 `usage_events` 中的不可变快照；上游在写入时分别保存 `provider` 和 `domain`，页面按 `Provider(域名)` 展示；仅有 Provider 时显示 Provider，两者均缺失时显示“—”，不在查询时关联配置或补填历史值；最近事件支持分页和可选的 5/10/15 秒自动刷新；
+- 在 CLIProxyAPI 管理页增加“费用统计”菜单，展示总费用、按模型汇总、按脱敏 API Key 汇总，以及最近请求的思考强度、总耗时和首 Token 耗时；最近事件直接展示 `usage_events` 中的不可变快照；上游在写入时分别保存 `provider` 和 `domain`，页面按 `Provider(域名)` 展示；仅有 Provider 时显示 Provider，两者均缺失时显示“—”，不在查询时关联配置或补填历史值；最近事件支持分页和可选的 5/10/15 秒自动刷新；
 - 在独立的“模型费用”页面编辑价格规则；费用页只列出 CLIProxyAPI `/v1/models` 当前暴露的模型，没有匹配价格规则的模型默认显示为 0，并标记为“未配置模型费用”。同步价格时先获取本地与上游的差异，确认后再保存，避免一次拉取直接覆盖人工调整。
 - 模型费用页会将 CLIProxyAPI 当前暴露的模型加入编辑器作为零价占位（已有规则和通配规则保持不变）；支持按需从 [LiteLLM 公共模型价格目录](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)、[Models.dev](https://models.dev/) 或 [OpenRouter Models API](https://openrouter.ai/docs/api-reference/list-available-models) 同步价格，未识别的模型仍可手动配置。
 - 提供独立的“密钥余额”页面，可为客户端 API Key 设置当前余额；后续 usage 事件产生费用时自动扣减，并展示累计请求、累计费用和余额状态。已设置且余额耗尽的密钥会在访问上游前返回 HTTP 402；未设置余额的密钥继续放行。完整密钥不会写入账单数据库。
@@ -81,7 +81,6 @@ plugins:
       priority: 1
       currency: USD
       cpa_billing_data_dir: /absolute/path/to/billing-data
-      cpa_host_config_path: /absolute/path/to/cliproxyapi.conf
 ```
 
 `cpa_billing_data_dir` 可直接在 CPA 管理页的插件配置中填写；留空时使用插件动态库所在的安装目录。
@@ -113,7 +112,7 @@ make install-local \\
 
 新接收的账单事件以表格快照保存在 SQLite 中；启动时内存只加载最近 10,000 条。`GET /summary` 支持 `start`、`end`、`page`、`page_size` 及 `event_status=all|success|failed`；状态只筛选最近事件及其分页数量，顶部汇总仍使用整个日期范围。全部时间与日期筛选统一从 `usage_events` 快照直接汇总，不使用模型累计表或内存累计缓存。修改价格规则不会重写历史事件。
 
-`usage_events` 只保存行主键以及时间、模型、思考强度、Provider、域名、脱敏 API Key、总耗时、首字耗时、输入 token、缓存 token、输出 token、费用金额、费用币种和状态。升级会原子迁移旧事件表，保留已有可展示值并删除内部字段；未保存过的上游和币种留空，不回填。旧 `upstream` 快照会原子拆成 `provider` 与 `domain`，不读取当前配置。
+`usage_events` 只保存行主键以及时间、模型、思考强度、脱敏 API Key、总耗时、首字耗时、输入 token、缓存 token、输出 token、费用金额、费用币种和状态。升级会原子迁移旧事件表，保留已有可展示值并删除内部字段；未保存过的上游和币种留空，不回填。旧 `upstream` 快照会原子拆成 `provider` 与 `domain`，不读取当前配置。
 
 最近事件直接查询此表，不联表，也不在页面读取上游配置。按 API Key 汇总直接以表中脱敏 `api_key` 分组（脱敏后相同的密钥合为一组），总 token 从输入加输出计算。所有时间范围的 Provider 分类直接使用快照中的 `provider`；没有上游快照的旧记录归入未记录分类。余额管理自己的密钥标识不参与事件表查询。
 
@@ -134,7 +133,6 @@ make install-local \\
 
 升级在一个事务中迁移旧账户数据（如有）、删除旧账户表和模型累计表并更新版本，失败全部回滚。已有余额（含负值）、备注、累计请求、累计费用和余额版本原样保留；不重算或补写历史事件。清空统计仅清零账户请求数与累计费用，保留余额和备注。删除密钥账户设置会移除余额与备注；已有累计用量仍保留。
 
-配置 `cpa_host_config_path` 为 CPA 主配置文件的绝对路径后，新 usage 事件会在写入前按宿主凭据标识核对配置，保存上游域名快照；完整上游密钥和凭据标识不写入事件表。支持 Codex、Claude、Gemini、xAI 和 OpenAI 兼容的 API Key 配置；未配置路径、不可读取、凭据类型不支持或不能准确匹配时域名留空，Provider 保存事件原值。修改配置、价格或币种不会重写已有快照。
 
 余额、备注均持久化保存；每笔 usage 的事件、累计费用和余额扣减在同一个事务中写入，写入失败会返回 `accepted: false`。余额页使用 `PATCH /key-balances` 的 `updates` 数组，只提交当前行修改过的字段。修改 `balance`、设置 `configured: false`（取消跟踪）或 `delete: true` 时需携带 GET 返回的 `balance_version`，放在 `expected_balance_version` 中；版本冲突返回 HTTP 409。备注 `note` 可独立修改，不会覆盖并发扣费。
 

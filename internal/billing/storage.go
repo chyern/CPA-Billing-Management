@@ -110,7 +110,7 @@ func loadRules(db *sql.DB) ([]PriceRule, error) {
 	return rules, rows.Err()
 }
 
-const eventColumns = `requested_at, model, reasoning_effort, provider, domain, api_key, latency_ns, ttft_ns,
+const eventColumns = `requested_at, model, reasoning_effort, api_key, latency_ns, ttft_ns,
  input_tokens, cached_tokens, output_tokens, cost, currency, failed`
 
 func loadEvents(db *sql.DB) ([]UsageEvent, error) {
@@ -127,7 +127,7 @@ func scanUsageEvents(rows *sql.Rows) ([]UsageEvent, error) {
 	for rows.Next() {
 		var event UsageEvent
 		var requestedAt string
-		if err := rows.Scan(&requestedAt, &event.Model, &event.ReasoningEffort, &event.Provider, &event.Domain, &event.APIKey, &event.LatencyNanos, &event.TTFTNanos, &event.InputTokens, &event.CachedTokens, &event.OutputTokens, &event.Cost, &event.Currency, &event.Failed); err != nil {
+		if err := rows.Scan(&requestedAt, &event.Model, &event.ReasoningEffort, &event.APIKey, &event.LatencyNanos, &event.TTFTNanos, &event.InputTokens, &event.CachedTokens, &event.OutputTokens, &event.Cost, &event.Currency, &event.Failed); err != nil {
 			return nil, fmt.Errorf("scan usage event: %w", err)
 		}
 		event.RequestedAt = parseDatabaseTime(requestedAt)

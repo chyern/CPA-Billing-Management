@@ -27,7 +27,6 @@ func handleUsage(store *billing.Store, raw []byte) error {
 		}
 	}
 	record := usageRecordFromObject(object)
-	record.Domain = usageDomainSnapshot(record)
 	if requestedAt := stringValue(object, "RequestedAt"); requestedAt != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, requestedAt); err == nil {
 			record.RequestedAt = parsed

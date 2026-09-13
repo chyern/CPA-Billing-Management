@@ -11,8 +11,6 @@ const eventSchema = `(
  requested_at TEXT NOT NULL,
  model TEXT NOT NULL,
  reasoning_effort TEXT NOT NULL DEFAULT '',
- provider TEXT NOT NULL DEFAULT '',
- domain TEXT NOT NULL DEFAULT '',
  api_key TEXT NOT NULL DEFAULT '',
  latency_ns INTEGER NOT NULL DEFAULT 0,
  ttft_ns INTEGER NOT NULL DEFAULT 0,
@@ -93,37 +91,24 @@ func migrateEventSnapshots(tx *sql.Tx, columns map[string]bool) error {
 		}
 		return "''"
 	}
-	rows, err := tx.Query(`SELECT id, requested_at, model, ` + column("reasoning_effort") + `, ` + column("upstream") + `, ` + column("provider") + `, ` + column("domain") + `, api_key,
-        latency_ns, ttft_ns, input_tokens, cached_tokens, output_tokens, cost, ` + column("currency") + `, failed FROM usage_events ORDER BY id`)
+	rows, err := tx.Query(`SELECT id, requested_at, model, ` + column("reasoning_effort") + `, api_key, latency_ns, ttft_ns, input_tokens, cached_tokens, output_tokens, cost, ` + column("currency") + `, failed FROM usage_events ORDER BY id`)
 	if err != nil {
 		return fmt.Errorf("read event snapshots for migration: %w", err)
 	}
 	defer rows.Close()
-	insert, err := tx.Prepare(`INSERT INTO usage_events_snapshot (id, ` + eventColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	insert, err := tx.Prepare(`INSERT INTO usage_events_snapshot (id, ` + eventColumns + `) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer insert.Close()
 	for rows.Next() {
 		var id int64
-		var requestedAt, combined string
+		var requestedAt string
 		var event UsageEvent
-		if err := rows.Scan(&id, &requestedAt, &event.Model, &event.ReasoningEffort, &combined, &event.Provider, &event.Domain, &event.APIKey,
-			&event.LatencyNanos, &event.TTFTNanos, &event.InputTokens, &event.CachedTokens, &event.OutputTokens, &event.Cost, &event.Currency, &event.Failed); err != nil {
+		if err := rows.Scan(&id, &requestedAt, &event.Model, &event.ReasoningEffort, &event.APIKey, &event.LatencyNanos, &event.TTFTNanos, &event.InputTokens, &event.CachedTokens, &event.OutputTokens, &event.Cost, &event.Currency, &event.Failed); err != nil {
 			return err
 		}
-		if columns["upstream"] {
-			event.Provider, event.Domain = "", ""
-			if combined != "" {
-				index := strings.LastIndexByte(combined, '(')
-				if index <= 0 || !strings.HasSuffix(combined, ")") {
-					return fmt.Errorf("cannot split upstream snapshot for event %d", id)
-				}
-				event.Provider, event.Domain = combined[:index], combined[index+1:len(combined)-1]
-			}
-		}
-		if _, err := insert.Exec(id, requestedAt, event.Model, event.ReasoningEffort, event.Provider, event.Domain, event.APIKey,
-			event.LatencyNanos, event.TTFTNanos, event.InputTokens, event.CachedTokens, event.OutputTokens, event.Cost, event.Currency, event.Failed); err != nil {
+		if _, err := insert.Exec(id, requestedAt, event.Model, event.ReasoningEffort, event.APIKey, event.LatencyNanos, event.TTFTNanos, event.InputTokens, event.CachedTokens, event.OutputTokens, event.Cost, event.Currency, event.Failed); err != nil {
 			return err
 		}
 	}

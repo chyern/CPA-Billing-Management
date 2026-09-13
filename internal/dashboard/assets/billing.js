@@ -155,7 +155,7 @@ function renderModels() {
 
   if (modelSearchQuery) {
     const q = modelSearchQuery.toLowerCase();
-    models = models.filter(m => (m.model || '').toLowerCase().includes(q) || (m.provider || '').toLowerCase().includes(q));
+    models = models.filter(m => (m.model || '').toLowerCase().includes(q));
   }
 
   if (modelSortField) {
@@ -173,7 +173,6 @@ function renderModels() {
 
   document.getElementById('models').innerHTML = models.length
     ? '<table><thead><tr>'
-      + '<th class="sortable" data-sort-model="provider">Provider ' + sortArrow(modelSortField === 'provider', modelSortAsc) + '</th>'
       + '<th class="sortable" data-sort-model="model">Model ' + sortArrow(modelSortField === 'model', modelSortAsc) + '</th>'
       + '<th class="num sortable" data-sort-model="requests">请求 ' + sortArrow(modelSortField === 'requests', modelSortAsc) + '</th>'
       + '<th class="num sortable" data-sort-model="input_tokens">输入 ' + sortArrow(modelSortField === 'input_tokens', modelSortAsc) + '</th>'
@@ -182,7 +181,7 @@ function renderModels() {
       + '<th class="num sortable" data-sort-model="total_tokens">总 token ' + sortArrow(modelSortField === 'total_tokens', modelSortAsc) + '</th>'
       + '<th class="num sortable" data-sort-model="cost">费用 ' + costHelp + ' ' + sortArrow(modelSortField === 'cost', modelSortAsc) + '</th>'
       + '</tr></thead><tbody>'
-      + models.map(model => '<tr><td><span class="provider-badge">' + escapeHTML(model.provider) + '</span></td><td>' + escapeHTML(model.model) + '</td><td class="num">' + formatNumber(model.requests) + '</td><td class="num">' + formatNumber(model.input_tokens) + '</td><td class="num">' + formatNumber(model.cached_tokens) + '</td><td class="num">' + formatNumber(model.output_tokens) + '</td><td class="num">' + formatNumber(model.total_tokens) + '</td><td class="num">' + formatMoney(model.cost) + '</td></tr>').join('')
+      + models.map(model => '<tr><td>' + escapeHTML(model.model) + '</td><td class="num">' + formatNumber(model.requests) + '</td><td class="num">' + formatNumber(model.input_tokens) + '</td><td class="num">' + formatNumber(model.cached_tokens) + '</td><td class="num">' + formatNumber(model.output_tokens) + '</td><td class="num">' + formatNumber(model.total_tokens) + '</td><td class="num">' + formatMoney(model.cost) + '</td></tr>').join('')
       + '</tbody></table>'
     : emptyView;
 }
@@ -226,13 +225,6 @@ function renderAPIKeys() {
     : emptyView;
 }
 
-function renderUpstream(event) {
-  const provider = String(event.provider || '').trim();
-  const domain = String(event.domain || '').trim();
-  const label = provider && domain ? provider + '(' + domain + ')' : provider || domain || '—';
-  return '<div class="event-upstream"><span class="event-upstream-name" title="' + escapeHTML(label) + '">' + escapeHTML(label) + '</span></div>';
-}
-
 function renderEvents() {
   let events = (state.recent_events || []).slice().reverse();
   const countBadge = document.getElementById('eventsCount');
@@ -241,12 +233,11 @@ function renderEvents() {
   const emptyView = '<div class="empty"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><div class="empty-title">暂无最近事件</div><div class="empty-desc">最近处理的 API 请求事件会实时出现在这里</div></div>';
 
   const eventTable = events.length
-      ? '<div class="table-responsive"><table><thead><tr><th>时间</th><th>模型</th><th>思考强度</th><th>上游</th><th>API Key</th><th class="num">耗时/首字</th><th class="num">输入/缓存</th><th class="num">输出</th><th class="num">费用 ' + costHelp + '</th><th>状态</th></tr></thead><tbody>'
+      ? '<div class="table-responsive"><table><thead><tr><th>时间</th><th>模型</th><th>思考强度</th><th>API Key</th><th class="num">耗时/首字</th><th class="num">输入/缓存</th><th class="num">输出</th><th class="num">费用 ' + costHelp + '</th><th>状态</th></tr></thead><tbody>'
       + events.map(event => '<tr>'
         + '<td>' + escapeHTML(new Date(event.requested_at).toLocaleString()) + '</td>'
         + '<td>' + escapeHTML(event.model || '-') + '</td>'
         + '<td>' + escapeHTML(event.reasoning_effort || '—') + '</td>'
-        + '<td>' + renderUpstream(event) + '</td>'
         + '<td><div class="code-tag-wrap"><span class="code-tag">' + escapeHTML(event.api_key || '-') + '</span>' + (event.api_key ? '<button type="button" class="copy-btn" data-copy="' + escapeHTML(event.api_key) + '" title="复制 API Key" aria-label="复制 API Key"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>' : '') + '</div></td>'
         + '<td class="num"><div class="dual-metric"><span class="dual-metric-primary">' + formatDuration(event.latency_ns) + '</span><span class="dual-metric-secondary">首字 ' + formatDuration(event.ttft_ns) + '</span></div></td>'
         + '<td class="num"><div class="dual-metric"><span class="dual-metric-primary">' + formatNumber(event.input_tokens) + '</span><span class="dual-metric-secondary">缓存 ' + formatNumber(event.cached_tokens) + '</span></div></td>'
