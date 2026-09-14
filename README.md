@@ -47,6 +47,11 @@ Tag 构建时写入对应的 `MAJOR.MINOR.PATCH`；本地非 Tag 构建显示为
 精确 Tag checkout 上运行 `make build` 则会自动使用该 Tag 版本。这样源码、构建产物
 和发布版本不会再依赖手工同步的版本常量。
 
+本地部署时应显式传入 `PLUGIN_VERSION=MAJOR.MINOR.PATCH`，不要依赖 `dev` 默认值。
+本机验证发现：无版本后缀的动态库即使元数据为 `dev` 也能注册，但 `cpa-billing-management-vdev.dylib`
+会被发现为另一个名为 `cpa-billing-management-vdev` 的插件，处于未注册状态。
+`PLUGIN_VERSION` 同时决定插件元数据中的版本和 `install-local` 生成的安装文件名。
+
 ## 安装与配置
 
 ### 通过第三方插件源安装
@@ -88,15 +93,47 @@ plugins:
 
 ### 本地目录安装（开发/快速更新）
 
-如果插件源码就在本机，不需要通过插件商店下载。先构建并运行 ABI 冒烟测试，再把版本化插件文件复制到 CLIProxyAPI 的本地插件目录：
+如果插件源码就在本机，不需要通过插件商店下载。先确定要写入的版本号和本体实际使用的插件目录。
+即使刚拉取最新 `main`，当前提交也可能是发布后的 registry 更新，并不处于精确 Tag 上，直接安装会生成 `vdev` 文件。
+以下命令使用当前提交最近的发布 Tag 作为本地部署版本，不会切换分支或改变待构建的源码：
 
 ```bash
-make smoke
-make install-local \\
-  CPA_PLUGIN_DIR=/absolute/path/to/.cli-proxy-api/plugins/darwin/arm64
+git fetch --tags
+CPA_LOCAL_TAG="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*')"
+# 必须成功取得形如 v0.1.46 的发布 Tag；没有 Tag 时手动指定有效版本后再继续。
+CPA_LOCAL_VERSION="${CPA_LOCAL_TAG#v}"
+test -n "$CPA_LOCAL_VERSION" || exit 1
+
+make test
+make install-local \
+  PLUGIN_VERSION="$CPA_LOCAL_VERSION" \
+  CPA_PLUGIN_DIR="$HOME/.cli-proxy-api/plugins/darwin/arm64"
 ```
 
-`install-local` 会直接覆盖当前 Tag 对应的同版本插件文件，不创建本地备份。以后重新执行 `make install-local` 并重启 CLIProxyAPI 即可加载新构建；账单数据库和插件配置不会被修改。
+也可以手动设置 `CPA_LOCAL_VERSION=0.1.46`（替换为本次部署需要的版本）。本地修改使用发布版本号构建，仅代表本地测试版本，不代表产物与官方发布包一致。
+
+`install-local` 已包含构建和 ABI 冒烟测试，无需另外执行 `make smoke`。上述目录适用于默认目录下的 Apple Silicon Mac；Linux amd64 通常使用 `linux/amd64` 子目录和 `.so` 文件，实际路径以本体配置的 `plugins.dir` 和加载日志为准。
+例如版本为 `0.1.46` 时，macOS 安装文件是 `cpa-billing-management-v0.1.46.dylib`。同版本文件会被覆盖，不自动创建备份。
+
+**更新已有安装时，还要确认本体实际加载的文件名。** 可以在本体日志中查找 `pluginhost` 的 `path=`，或在 macOS 上使用 `lsof -p <CLIProxyAPI进程PID>` 查看动态库路径。
+如果实际加载的是无版本后缀的 `cpa-billing-management.dylib`，应使用下面的更新方式替代上面的 `make install-local`，避免额外生成一个扫描候选文件：
+
+```bash
+make smoke PLUGIN_VERSION="$CPA_LOCAL_VERSION"
+CPA_PLUGIN_FILE="$HOME/.cli-proxy-api/plugins/darwin/arm64/cpa-billing-management.dylib"
+install -m 755 bin/cpa-billing-management.dylib "${CPA_PLUGIN_FILE}.new"
+mv "${CPA_PLUGIN_FILE}.new" "$CPA_PLUGIN_FILE"
+```
+
+如果之前已经生成 `cpa-billing-management-vdev.dylib`，请将它移到 `plugins.dir` 之外的备份目录，避免管理页继续显示多余的未注册插件。不要误移动账单数据库或当前实际加载的动态库。
+
+最后重启 CLIProxyAPI，再检查插件管理页的版本、实际加载路径及账单页面是否正常。对于本机使用 `sh.brew.cliproxyapi` LaunchAgent 的安装，重启命令为：
+
+```bash
+launchctl kickstart -k "gui/$(id -u)/sh.brew.cliproxyapi"
+```
+
+其他安装方式请使用实际的服务管理命令。复制插件文件本身不会修改账单数据库和插件配置；新版插件启动时可能执行数据库迁移，部署前应备份账单数据库。
 
 启动 CLIProxyAPI 后，在管理页进入“费用统计”查看账单，或进入“模型费用”维护价格。管理 API 路由为：
 
