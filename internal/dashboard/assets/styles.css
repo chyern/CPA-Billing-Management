@@ -928,26 +928,35 @@ td.num {
 }
 
 .cost-help-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 16px;
   height: 16px;
   padding: 0;
-  border: 1px solid var(--text-tertiary);
+  border: 0;
   border-radius: 50%;
   background: transparent;
   color: var(--text-tertiary);
-  font-family: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 14px;
+  line-height: 0;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.cost-help-button svg {
+  display: block;
+  flex-shrink: 0;
 }
 
 .cost-help-button:hover,
 .cost-help-button[aria-expanded="true"] {
-  border-color: var(--primary-color);
   color: var(--primary-color);
   background: rgba(99, 102, 241, 0.1);
+}
+
+.cost-help-button:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
 }
 
 .cost-help-tooltip {

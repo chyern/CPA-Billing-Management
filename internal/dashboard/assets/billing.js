@@ -43,7 +43,7 @@ const escapeHTML = value => String(value ?? '').replace(
 );
 const formatNumber = value => Number(value || 0).toLocaleString('zh-CN');
 const formatMoney = value => escapeHTML(state.currency || 'USD') + ' ' + Number(value || 0).toFixed(3);
-const costHelp = '<span class="cost-help"><button type="button" class="cost-help-button" data-action="cost-help" aria-label="费用计算说明" aria-expanded="false"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></button><span class="cost-help-tooltip" role="tooltip" hidden>上游明确返回金额时优先使用，否则按“模型费用”中的每百万 token 价格估算</span></span>';
+const costHelp = '<span class="cost-help"><button type="button" class="cost-help-button" data-action="cost-help" aria-label="费用计算说明" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></button><span class="cost-help-tooltip" role="tooltip" hidden>上游明确返回金额时优先使用，否则按“模型费用”中的每百万 token 价格估算</span></span>';
 
 function formatDuration(nanoseconds) {
   const milliseconds = Number(nanoseconds || 0) / 1e6;
