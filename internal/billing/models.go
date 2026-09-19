@@ -134,9 +134,11 @@ type Summary struct {
 }
 
 type Store struct {
-	mu      sync.RWMutex
-	dataDir string
-	db      *sql.DB
-	state   State
-	lastErr error
+	mu           sync.RWMutex
+	dataDir      string
+	db           *sql.DB
+	state        State
+	lastErr      error
+	rechargeStop chan struct{}
+	rechargeDone sync.WaitGroup
 }

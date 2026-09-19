@@ -56,12 +56,12 @@ func TestRenderContainsKeyBalanceDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, expected := range []string{"CPA 密钥余额", "API Key 余额", "仅显示 CLIProxyAPI 当前配置的 API Key", "保持配置顺序", "备注", "填写密钥用途", "当前余额", "累计费用", "操作", "保存", "删除", "确定要删除", "添加", "new-key-input", "generateAPIKey", "getRandomValues", "pending", "disabled", "PUT", "/v0/management/api-keys", "key-balances", "crypto.subtle", "完整密钥不会写入账单数据库"} {
+	for _, expected := range []string{"CPA 密钥余额", "API Key 余额", "仅显示 CLIProxyAPI 当前配置的 API Key", "保持配置顺序", "定期充值", "recharge-amount", "recharge-frequency", "recharge-time", "recharge-day", "recharge-cron", "recharge-mode", "备注", "填写密钥用途", "当前余额", "累计费用", "操作", "保存", "删除", "确定要删除", "添加", "new-key-input", "generateAPIKey", "getRandomValues", "pending", "disabled", "PUT", "/v0/management/api-keys", "key-balances", "crypto.subtle", "完整密钥不会写入账单数据库"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("rendered key-balance dashboard does not contain %q", expected)
 		}
 	}
-	for _, unexpected := range []string{"页面切换", "nav-tabs", "模型价格规则", "最近事件"} {
+	for _, unexpected := range []string{"页面切换", "nav-tabs", "模型价格规则", "最近事件", "status-column", "status-cell", `<span class="pill">未设置`, `正常</span>`, `已耗尽</span>`} {
 		if strings.Contains(text, unexpected) {
 			t.Fatalf("key-balance dashboard must not contain %q", unexpected)
 		}

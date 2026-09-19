@@ -10,11 +10,23 @@
   <header class="header">
     <div class="header-brand">
       <div class="header-top">
-        <h1>CPA 费用统计 <span class="title-badge">Billing</span></h1>
+        <div class="brand-logo">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="1" x2="12" y2="23"/>
+            <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+          </svg>
+        </div>
+        <div class="header-titles">
+          <h1>CPA 费用统计 <span class="title-badge">Billing</span></h1>
+          <div class="muted header-desc">实时监控 API 调用开销、Token 消耗分布与请求健康状况</div>
+        </div>
       </div>
     </div>
     <div class="toolbar">
       <div class="refresh-control">
+        <svg class="refresh-control-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+        </svg>
         <span class="muted">自动刷新</span>
         <select id="autoRefresh" aria-label="自动刷新">
           <option value="0">不刷新</option>
@@ -44,8 +56,14 @@
           <label class="field" for="startDate"><span>开始日期</span><input id="startDate" type="date"></label>
           <label class="field" for="endDate"><span>结束日期</span><input id="endDate" type="date"></label>
           <div class="query-actions">
-            <button class="btn primary" id="query">查询</button>
-            <button class="btn" id="resetQuery">重置</button>
+            <button class="btn primary" id="query">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              <span>查询</span>
+            </button>
+            <button class="btn" id="resetQuery">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+              <span>重置</span>
+            </button>
           </div>
         </div>
       </div>

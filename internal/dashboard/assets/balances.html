@@ -10,9 +10,17 @@
   <header class="header">
     <div class="header-brand">
       <div class="header-top">
-        <h1>CPA 密钥余额 <span class="title-badge">Balance</span></h1>
+        <div class="brand-logo">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+        </div>
+        <div class="header-titles">
+          <h1>CPA 密钥余额 <span class="title-badge">Balance</span></h1>
+          <div class="muted header-desc">为客户端 API Key 设置当前余额；新 usage 事件产生费用时会自动扣减，余额耗尽后的请求会在访问上游前被拦截。</div>
+        </div>
       </div>
-      <div class="muted">为客户端 API Key 设置当前余额；新 usage 事件产生费用时会自动扣减，余额耗尽后的请求会在访问上游前被拦截。</div>
     </div>
     <div class="toolbar">
       <div class="status-wrap">
@@ -28,20 +36,224 @@
       <div class="rules-panel-header">
         <div>
           <h2>API Key 余额</h2>
-          <p class="muted">仅显示 CLIProxyAPI 当前配置的 API Key，并保持配置顺序。留空表示不跟踪余额，完整密钥不会写入账单数据库。</p>
+          <p class="muted">仅显示 CLIProxyAPI 当前配置的 API Key，并保持配置顺序。余额留空表示不跟踪；可按小时、天、周或月自动增加或重置额度。</p>
         </div>
         <div class="add-key-controls">
           <div class="search-box">
             <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
             <input type="text" id="balanceSearch" placeholder="搜索 Key 或备注...">
           </div>
-          <button class="btn primary" id="addAPIKey">添加</button>
+          <button class="btn primary" id="addAPIKey">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span>添加</span>
+          </button>
         </div>
       </div>
       <div id="balances" class="rules"></div>
     </section>
     <div id="toastContainer" class="cpa-toast-container"></div>
   </main>
+
+  <!-- 定时额度配置弹窗 (定期充值) -->
+  <div id="rechargeModal" class="cpa-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="rechargeModalTitle">
+    <div class="cpa-modal-card recharge-modal-card">
+      <div class="cpa-modal-header">
+        <div class="cpa-modal-icon-wrap info">
+          <svg class="cpa-modal-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+          </svg>
+        </div>
+        <div class="cpa-modal-title-wrap">
+          <h3 class="cpa-modal-title" id="rechargeModalTitle">设置定时额度</h3>
+          <p class="cpa-modal-desc">为 API Key 配置定期自动充值或重置额度（定期充值）</p>
+        </div>
+        <button type="button" class="cpa-modal-close" id="closeRechargeModal" aria-label="关闭">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="cpa-modal-body recharge-modal-body">
+        <div class="recharge-target-bar">
+          <span class="target-label">目标 API Key：</span>
+          <span class="code-tag" id="modalTargetKey"></span>
+          <span class="target-note" id="modalTargetNote"></span>
+        </div>
+
+        <div class="recharge-toggle-row">
+          <div class="toggle-info">
+            <div class="toggle-title">启用定时额度</div>
+            <div class="toggle-sub">按照预设周期与规则自动充值或重置可用额度</div>
+          </div>
+          <label class="cpa-switch">
+            <input type="checkbox" id="rechargeEnabledToggle">
+            <span class="cpa-switch-slider"></span>
+          </label>
+        </div>
+
+        <div id="rechargeConfigBody" class="recharge-config-body">
+          <!-- 额度金额 -->
+          <div class="recharge-form-item">
+            <div class="form-item-header">
+              <label class="form-item-label" for="modalRechargeAmount">周期额度金额</label>
+              <span class="currency-tag">币种：<span class="recharge-currency-label">USD</span></span>
+            </div>
+            <div class="amount-input-group">
+              <span class="amount-prefix recharge-currency-label">USD</span>
+              <input type="number" id="modalRechargeAmount" class="recharge-amount form-input" min="0" step="0.001" placeholder="例如：10.00">
+            </div>
+            <div class="quick-presets">
+              <span class="presets-title">快捷面额：</span>
+              <button type="button" class="preset-pill" data-amount="5">+5</button>
+              <button type="button" class="preset-pill" data-amount="10">+10</button>
+              <button type="button" class="preset-pill" data-amount="20">+20</button>
+              <button type="button" class="preset-pill" data-amount="50">+50</button>
+              <button type="button" class="preset-pill" data-amount="100">+100</button>
+            </div>
+          </div>
+
+          <!-- 策略模式 -->
+          <div class="recharge-form-item">
+            <label class="form-item-label">额度策略模式</label>
+            <div class="mode-options-grid">
+              <label class="mode-card active" data-mode="add">
+                <input type="radio" name="modalRechargeModeRadio" value="add" checked>
+                <div class="mode-card-content">
+                  <div class="mode-card-title-row">
+                    <span class="mode-icon-circle add">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    </span>
+                    <span class="mode-name">增加额度 (累加)</span>
+                    <span class="mode-tag add">推荐充值</span>
+                  </div>
+                  <div class="mode-desc">在当前剩余余额上累加指定金额；未用完的原有余额会保留。</div>
+                </div>
+              </label>
+              <label class="mode-card" data-mode="reset">
+                <input type="radio" name="modalRechargeModeRadio" value="reset">
+                <div class="mode-card-content">
+                  <div class="mode-card-title-row">
+                    <span class="mode-icon-circle reset">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+                    </span>
+                    <span class="mode-name">重置额度 (固定)</span>
+                    <span class="mode-tag reset">周期配额</span>
+                  </div>
+                  <div class="mode-desc">定时将当前余额重置为此固定金额；适合按日/周/月的固定配额上限。</div>
+                </div>
+              </label>
+            </div>
+            <select id="modalRechargeMode" class="recharge-mode" style="display:none;">
+              <option value="add">增加</option>
+              <option value="reset">重置</option>
+            </select>
+          </div>
+
+          <!-- 执行周期与时间 -->
+          <div class="recharge-form-item">
+            <label class="form-item-label">执行周期与时间</label>
+            <div class="frequency-tabs">
+              <button type="button" class="freq-tab-btn active" data-frequency="daily">每天</button>
+              <button type="button" class="freq-tab-btn" data-frequency="weekly">每周</button>
+              <button type="button" class="freq-tab-btn" data-frequency="monthly">每月</button>
+              <button type="button" class="freq-tab-btn" data-frequency="hourly">每小时</button>
+              <button type="button" class="freq-tab-btn" data-frequency="custom">自定义 Cron</button>
+            </div>
+            <select id="modalRechargeFrequency" class="recharge-frequency" style="display:none;">
+              <option value="daily">每天</option>
+              <option value="weekly">每周</option>
+              <option value="monthly">每月</option>
+              <option value="hourly">每小时</option>
+              <option value="custom">自定义</option>
+            </select>
+
+            <div class="schedule-detail-box">
+              <!-- 每天 -->
+              <div id="scheduleSectionDaily" class="schedule-section">
+                <span class="detail-label">执行时间：</span>
+                <input type="time" id="modalRechargeTimeDaily" class="recharge-time form-input time-input" value="00:00">
+                <span class="detail-hint">每天在此时间点自动执行</span>
+              </div>
+
+              <!-- 每周 -->
+              <div id="scheduleSectionWeekly" class="schedule-section" style="display:none;">
+                <span class="detail-label">星期：</span>
+                <select id="modalRechargeDayWeekly" class="recharge-day form-input select-input">
+                  <option value="1">周一</option>
+                  <option value="2">周二</option>
+                  <option value="3">周三</option>
+                  <option value="4">周四</option>
+                  <option value="5">周五</option>
+                  <option value="6">周六</option>
+                  <option value="7">周日</option>
+                </select>
+                <span class="detail-label" style="margin-left:8px;">时间：</span>
+                <input type="time" id="modalRechargeTimeWeekly" class="form-input time-input" value="00:00">
+              </div>
+
+              <!-- 每月 -->
+              <div id="scheduleSectionMonthly" class="schedule-section" style="display:none;">
+                <span class="detail-label">日期：</span>
+                <select id="modalRechargeDayMonthly" class="form-input select-input">
+                  <!-- 1~28日 -->
+                </select>
+                <span class="detail-label" style="margin-left:8px;">时间：</span>
+                <input type="time" id="modalRechargeTimeMonthly" class="form-input time-input" value="00:00">
+              </div>
+
+              <!-- 每小时 -->
+              <div id="scheduleSectionHourly" class="schedule-section" style="display:none;">
+                <span class="detail-hint">每小时整点（00 分）自动执行一次</span>
+              </div>
+
+              <!-- 自定义 Cron -->
+              <div id="scheduleSectionCustom" class="schedule-section custom-section" style="display:none;">
+                <div class="cron-input-wrap">
+                  <input type="text" id="modalRechargeCron" class="recharge-cron form-input monospace" placeholder="Cron 表达式，如：0 9 * * 1-5">
+                </div>
+                <div class="cron-quick-presets">
+                  <span class="cron-presets-label">常用预设：</span>
+                  <button type="button" class="cron-pill" data-cron="0 0 * * *">每天 00:00</button>
+                  <button type="button" class="cron-pill" data-cron="0 9 * * 1">每周一 09:00</button>
+                  <button type="button" class="cron-pill" data-cron="0 0 1 * *">每月 1 日 00:00</button>
+                  <button type="button" class="cron-pill" data-cron="0 9 * * 1-5">工作日早 9 点</button>
+                </div>
+                <div class="cron-help-text">标准 Cron 格式：分(0-59) 时(0-23) 日(1-31) 月(1-12) 周(0-7)</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 规则预览卡片 -->
+          <div class="recharge-preview-card">
+            <div class="preview-card-header">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+              <span>生效规则预览</span>
+            </div>
+            <div class="preview-rule-text" id="modalPreviewRuleSummary">--</div>
+            <div class="preview-next-run" id="modalPreviewNextRun">--</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="cpa-modal-actions recharge-modal-actions">
+        <button type="button" class="btn danger-ghost" id="modalBtnClearRecharge">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          <span>清除定时额度</span>
+        </button>
+        <div class="modal-right-actions">
+          <button type="button" class="btn secondary" id="modalBtnCancel">取消</button>
+          <button type="button" class="btn primary" id="modalBtnSave">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            <span>确定并保存</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <footer class="footer">CPA Billing Management · 当前币种：<span id="currency"></span> · 未设置余额的密钥不拦截</footer>
   <script id="initial" type="application/json">{{INITIAL_JSON}}</script>

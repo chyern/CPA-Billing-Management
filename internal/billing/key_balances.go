@@ -13,22 +13,32 @@ import (
 // APIKeyBalance is the current tracked balance for a client API key. APIKeyID
 // is a short one-way identifier; the complete credential is never persisted.
 type APIKeyBalance struct {
-	APIKeyID       string  `json:"api_key_id"`
-	APIKey         string  `json:"api_key"`
-	CallerScope    string  `json:"caller_scope,omitempty"`
-	Note           string  `json:"note,omitempty"`
-	Balance        float64 `json:"balance"`
-	Configured     bool    `json:"configured"`
-	BalanceVersion string  `json:"balance_version"`
-	Requests       int64   `json:"requests"`
-	Cost           float64 `json:"cost"`
+	APIKeyID           string  `json:"api_key_id"`
+	APIKey             string  `json:"api_key"`
+	CallerScope        string  `json:"caller_scope,omitempty"`
+	Note               string  `json:"note,omitempty"`
+	Balance            float64 `json:"balance"`
+	Configured         bool    `json:"configured"`
+	BalanceVersion     string  `json:"balance_version"`
+	Requests           int64   `json:"requests"`
+	Cost               float64 `json:"cost"`
+	RechargeAmount     float64 `json:"recharge_amount"`
+	RechargeCron       string  `json:"recharge_cron,omitempty"`
+	RechargeMode       string  `json:"recharge_mode,omitempty"`
+	RechargeNextAt     string  `json:"recharge_next_at,omitempty"`
+	RechargeConfigured bool    `json:"recharge_configured"`
 }
 
 func (s *Store) KeyBalances() ([]APIKeyBalance, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.applyDueRechargesLocked(time.Now().UTC()); err != nil {
+		s.lastErr = err
+		return nil, err
+	}
 
-	rows, err := s.db.Query(`SELECT api_key_id, api_key, caller_scope, balance, note, requests, cost, balance_version
+	rows, err := s.db.Query(`SELECT api_key_id, api_key, caller_scope, balance, note, requests, cost, balance_version,
+	 recharge_amount, recharge_cron, recharge_mode, recharge_next_at
 	 FROM api_key_accounts WHERE api_key_id <> '' ORDER BY api_key, api_key_id`)
 	if err != nil {
 		return nil, fmt.Errorf("query API key accounts: %w", err)
@@ -38,10 +48,12 @@ func (s *Store) KeyBalances() ([]APIKeyBalance, error) {
 	for rows.Next() {
 		var item APIKeyBalance
 		var balance sql.NullFloat64
-		if err := rows.Scan(&item.APIKeyID, &item.APIKey, &item.CallerScope, &balance, &item.Note, &item.Requests, &item.Cost, &item.BalanceVersion); err != nil {
+		if err := rows.Scan(&item.APIKeyID, &item.APIKey, &item.CallerScope, &balance, &item.Note, &item.Requests, &item.Cost, &item.BalanceVersion,
+			&item.RechargeAmount, &item.RechargeCron, &item.RechargeMode, &item.RechargeNextAt); err != nil {
 			return nil, fmt.Errorf("scan API key account: %w", err)
 		}
 		item.Configured, item.Balance = balance.Valid, balance.Float64
+		item.RechargeConfigured = item.Configured && item.RechargeAmount > 0 && item.RechargeCron != "" && item.RechargeNextAt != ""
 		result = append(result, item)
 	}
 	return result, rows.Err()
@@ -52,8 +64,9 @@ func (s *Store) KeyBalances() ([]APIKeyBalance, error) {
 var ErrBalanceConflict = errors.New("API key balance has changed; refresh and retry")
 
 // APIKeyBalanceUpdate modifies only the supplied fields for one key. Balance
-// changes, disabling tracking and deletion require the version from KeyBalances;
-// notes can be edited independently while requests continue to consume credit.
+// and recharge changes, disabling tracking and deletion require the version
+// from KeyBalances; notes can be edited independently while requests continue
+// to consume credit.
 type APIKeyBalanceUpdate struct {
 	APIKeyID               string   `json:"api_key_id"`
 	APIKey                 string   `json:"api_key"`
@@ -61,6 +74,9 @@ type APIKeyBalanceUpdate struct {
 	Note                   *string  `json:"note,omitempty"`
 	Balance                *float64 `json:"balance,omitempty"`
 	Configured             *bool    `json:"configured,omitempty"`
+	RechargeAmount         *float64 `json:"recharge_amount,omitempty"`
+	RechargeCron           *string  `json:"recharge_cron,omitempty"`
+	RechargeMode           *string  `json:"recharge_mode,omitempty"`
 	Delete                 bool     `json:"delete,omitempty"`
 	ExpectedBalanceVersion *string  `json:"expected_balance_version,omitempty"`
 }
@@ -88,7 +104,16 @@ func (s *Store) PatchKeyBalances(items []APIKeyBalanceUpdate) error {
 		if item.Configured != nil && *item.Configured && item.Balance == nil {
 			return fmt.Errorf("enabling balance tracking requires a balance")
 		}
-		if (item.Delete || item.Balance != nil || item.Configured != nil) && item.ExpectedBalanceVersion == nil {
+		rechargeChanged := item.RechargeAmount != nil || item.RechargeCron != nil || item.RechargeMode != nil
+		if item.RechargeAmount == nil && (item.RechargeCron != nil || item.RechargeMode != nil) {
+			return fmt.Errorf("recharge amount is required when changing the recharge schedule")
+		}
+		if item.RechargeAmount != nil {
+			if _, _, _, err := normalizeRecharge(item.RechargeAmount, item.RechargeCron, item.RechargeMode); err != nil {
+				return err
+			}
+		}
+		if (item.Delete || item.Balance != nil || item.Configured != nil || rechargeChanged) && item.ExpectedBalanceVersion == nil {
 			return fmt.Errorf("API key balance version is required")
 		}
 		if item.Note != nil {
@@ -118,6 +143,7 @@ func (s *Store) PatchKeyBalances(items []APIKeyBalanceUpdate) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	err := s.withTransaction(func(tx *sql.Tx) error {
 		for _, item := range items {
+			rechargeChanged := item.RechargeAmount != nil || item.RechargeCron != nil || item.RechargeMode != nil
 			if item.ExpectedBalanceVersion != nil {
 				var version string
 				err := tx.QueryRow(`SELECT balance_version FROM api_key_accounts WHERE api_key_id = ?`, item.APIKeyID).Scan(&version)
@@ -129,7 +155,7 @@ func (s *Store) PatchKeyBalances(items []APIKeyBalanceUpdate) error {
 				}
 			}
 			if item.Delete || (item.Configured != nil && !*item.Configured) {
-				if _, err := tx.Exec(`UPDATE api_key_accounts SET balance=NULL, caller_scope='', balance_version='', updated_at=? WHERE api_key_id = ?`, now, item.APIKeyID); err != nil {
+				if _, err := tx.Exec(`UPDATE api_key_accounts SET balance=NULL, caller_scope='', balance_version='', recharge_amount=0, recharge_cron='', recharge_mode='add', recharge_next_at='', updated_at=? WHERE api_key_id = ?`, now, item.APIKeyID); err != nil {
 					return fmt.Errorf("delete API key balance: %w", err)
 				}
 			} else if item.Balance != nil {
@@ -138,6 +164,26 @@ func (s *Store) PatchKeyBalances(items []APIKeyBalanceUpdate) error {
 					caller_scope = CASE WHEN excluded.caller_scope = '' THEN api_key_accounts.caller_scope ELSE excluded.caller_scope END,
 					balance = excluded.balance, balance_version = excluded.balance_version, updated_at = excluded.updated_at`, item.APIKeyID, item.APIKey, item.CallerScope, *item.Balance, now, now); err != nil {
 					return fmt.Errorf("update API key balance: %w", err)
+				}
+			}
+			if rechargeChanged && !item.Delete && !(item.Configured != nil && !*item.Configured) {
+				amount, cron, mode, err := normalizeRecharge(item.RechargeAmount, item.RechargeCron, item.RechargeMode)
+				if err != nil {
+					return err
+				}
+				var next string
+				if amount > 0 {
+					var balance sql.NullFloat64
+					if err := tx.QueryRow(`SELECT balance FROM api_key_accounts WHERE api_key_id=?`, item.APIKeyID).Scan(&balance); err != nil {
+						return err
+					}
+					if !balance.Valid {
+						return fmt.Errorf("a balance is required before enabling recharge")
+					}
+					next = nextRechargeAt(time.Now().UTC(), cron).Format(time.RFC3339Nano)
+				}
+				if _, err := tx.Exec(`UPDATE api_key_accounts SET recharge_amount=?, recharge_cron=?, recharge_mode=?, recharge_next_at=?, updated_at=? WHERE api_key_id=?`, amount, cron, mode, next, now, item.APIKeyID); err != nil {
+					return fmt.Errorf("update API key recharge: %w", err)
 				}
 			}
 			if item.Delete || (item.Note != nil && *item.Note == "") {
@@ -255,7 +301,7 @@ func (s *Store) SetKeyBalances(items []APIKeyBalance) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	err := s.withTransaction(func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`UPDATE api_key_accounts SET balance=NULL, caller_scope='', balance_version='', updated_at=?`, now); err != nil {
+		if _, err := tx.Exec(`UPDATE api_key_accounts SET balance=NULL, caller_scope='', balance_version='', recharge_amount=0, recharge_cron='', recharge_mode='add', recharge_next_at='', updated_at=?`, now); err != nil {
 			return fmt.Errorf("clear API key balances: %w", err)
 		}
 		for _, item := range items {
@@ -278,8 +324,11 @@ func (s *Store) BalanceForCallerScope(callerScope string) (float64, bool, error)
 	if callerScope == "" {
 		return 0, false, nil
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.applyDueRechargesLocked(time.Now().UTC()); err != nil {
+		return 0, false, err
+	}
 	var balance float64
 	err := s.db.QueryRow(`SELECT balance FROM api_key_accounts WHERE caller_scope = ? AND balance IS NOT NULL`, callerScope).Scan(&balance)
 	if err == sql.ErrNoRows {

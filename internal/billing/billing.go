@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	stateVersion    = 8
+	stateVersion    = 10
 	maxCachedEvents = 10000
 	defaultCurrency = "USD"
 )
@@ -44,6 +44,7 @@ func NewStore(dataDir string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	s.startRechargeWorker()
 	return s, nil
 }
 
@@ -133,6 +134,11 @@ func (s *Store) LastError() string {
 // Close releases the SQLite connection. It is used when the plugin is
 // reconfigured to point at a different data directory.
 func (s *Store) Close() error {
+	if s.rechargeStop != nil {
+		close(s.rechargeStop)
+		s.rechargeDone.Wait()
+		s.rechargeStop = nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.db == nil {

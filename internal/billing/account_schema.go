@@ -18,9 +18,48 @@ func ensureAccountSchema(tx *sql.Tx) error {
 		requests INTEGER NOT NULL DEFAULT 0,
 		cost REAL NOT NULL DEFAULT 0,
 		balance_version TEXT NOT NULL DEFAULT '',
+		recharge_amount REAL NOT NULL DEFAULT 0,
+		recharge_mode TEXT NOT NULL DEFAULT 'add',
+		recharge_cron TEXT NOT NULL DEFAULT '',
+		recharge_next_at TEXT NOT NULL DEFAULT '',
 		updated_at TEXT NOT NULL DEFAULT ''
 	)`); err != nil {
 		return err
+	}
+	for _, column := range []struct{ name, definition string }{
+		{"recharge_amount", "REAL NOT NULL DEFAULT 0"},
+		{"recharge_mode", "TEXT NOT NULL DEFAULT 'add'"},
+		{"recharge_cron", "TEXT NOT NULL DEFAULT ''"},
+		{"recharge_next_at", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		var exists int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('api_key_accounts') WHERE name=?`, column.name).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			if _, err := tx.Exec(`ALTER TABLE api_key_accounts ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
+				return err
+			}
+		}
+	}
+	// Version 9 stored a small interval name. Convert it once to an equivalent
+	// standard five-field cron expression, then remove the legacy column.
+	var legacyInterval int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('api_key_accounts') WHERE name='recharge_interval'`).Scan(&legacyInterval); err != nil {
+		return err
+	}
+	if legacyInterval != 0 {
+		if _, err := tx.Exec(`UPDATE api_key_accounts SET recharge_cron=CASE recharge_interval
+			WHEN 'hourly' THEN '0 * * * *'
+			WHEN 'daily' THEN '0 0 * * *'
+			WHEN 'weekly' THEN '0 0 * * 1'
+			WHEN 'monthly' THEN '0 0 1 * *'
+			ELSE recharge_cron END WHERE recharge_cron='' AND recharge_interval<>''`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`ALTER TABLE api_key_accounts DROP COLUMN recharge_interval`); err != nil {
+			return err
+		}
 	}
 	for _, table := range []string{"api_key_aggregates", "api_key_balance_notes", "api_key_balances"} {
 		var exists int
@@ -76,6 +115,6 @@ func clearAccountStatistics(tx *sql.Tx) error {
 }
 
 func pruneEmptyAccounts(tx *sql.Tx) error {
-	_, err := tx.Exec(`DELETE FROM api_key_accounts WHERE balance IS NULL AND note='' AND requests=0 AND cost=0`)
+	_, err := tx.Exec(`DELETE FROM api_key_accounts WHERE balance IS NULL AND note='' AND requests=0 AND cost=0 AND recharge_amount=0 AND recharge_cron=''`)
 	return err
 }

@@ -65,6 +65,9 @@ func (s *Store) persistResetLocked() error {
 
 func (s *Store) persistUsageLocked(event UsageEvent, next State, apiAgg *APIKeyAggregate) error {
 	return s.withTransaction(func(tx *sql.Tx) error {
+		if err := applyDueRechargesTx(tx, next.UpdatedAt); err != nil {
+			return err
+		}
 		if err := writeSettings(tx, next); err != nil {
 			return err
 		}

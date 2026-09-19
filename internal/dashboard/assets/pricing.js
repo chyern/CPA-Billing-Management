@@ -98,10 +98,12 @@ function renderRules() {
       const wildcardBadge = match === '*' ? '<span class="pill wildcard-pill">默认兜底</span>' : '';
       const catalogRule = catalogModels.some(model => ruleMatchesModel(rule.match, model.model));
       const readonly = catalogRule ? ' readonly title="模型名称来自 CLIProxyAPI 模型列表"' : '';
+      const saveIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+      const removeIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
       const removeButton = catalogRule
-        ? '<button class="btn danger" disabled title="CLIProxyAPI 内置模型不能删除">删除</button>'
-        : '<button class="btn danger" data-action="remove" data-index="' + index + '">删除</button>';
-      const saveButton = '<button class="btn primary" data-action="save-row" data-index="' + index + '"' + (rule._dirty ? '' : ' disabled') + '>保存</button>';
+        ? '<button class="btn danger btn-sm" disabled title="CLIProxyAPI 内置模型不能删除">' + removeIcon + '<span>删除</span></button>'
+        : '<button class="btn danger btn-sm" data-action="remove" data-index="' + index + '">' + removeIcon + '<span>删除</span></button>';
+      const saveButton = '<button class="btn primary btn-sm" data-action="save-row" data-index="' + index + '"' + (rule._dirty ? '' : ' disabled') + '>' + saveIcon + '<span>保存</span></button>';
       const trCls = change ? ' class="rule-row-changed"' : '';
       return '<tr data-i="' + index + '"' + trCls + '>' + '<td><div class="rule-match"><input class="match" data-k="match" placeholder="例如：gpt-4o" value="' + (rule._draft ? '' : escapeHTML(rule.match)) + '"' + readonly + '>' + badge + wildcardBadge + '</div></td>'
       + '<td><input data-k="input_per_million" type="number" min="0" step="0.000001" placeholder="例如：2.5" value="' + valueFor(rule, 'input_per_million') + '"></td>'

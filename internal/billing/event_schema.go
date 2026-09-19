@@ -61,7 +61,7 @@ func ensureEventSchemaTx(tx *sql.Tx) error {
 		if err != nil && err != sql.ErrNoRows {
 			return err
 		}
-		if err == nil && version != 4 && version != 5 && version != 6 && version != 7 && version != stateVersion {
+		if err == nil && version != 4 && version != 5 && version != 6 && version != 7 && version != 8 && version != 9 && version != stateVersion {
 			return fmt.Errorf("unsupported billing schema version %d", version)
 		}
 		if _, err = tx.Exec(`CREATE TABLE usage_events_snapshot ` + eventSchema); err != nil {

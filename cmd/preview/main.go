@@ -3,17 +3,41 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/chyern/CPA-Billing-Management/internal/billing"
 	"github.com/chyern/CPA-Billing-Management/internal/dashboard"
 )
 
+func previewKeyID(key string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(key)))
+	return hex.EncodeToString(sum[:8])
+}
+
 func main() {
+	demoKey1 := "sk-a1234567890abcdef1234567890demo"
+	demoKey2 := "sk-b9876543210fedcba0987654321test"
+
+	keyBalances := []map[string]any{
+		{
+			"api_key_id": previewKeyID(demoKey1), "caller_scope": "scope-1", "api_key": "sk-a••••••demo",
+			"balance": 15.50, "cost": 30.7, "requests": 96, "note": "Production API Key", "configured": true,
+			"recharge_configured": true, "recharge_amount": 10.0, "recharge_cron": "0 0 * * *",
+			"recharge_mode": "add", "recharge_next_at": time.Now().Add(12 * time.Hour).Format(time.RFC3339),
+		},
+		{
+			"api_key_id": previewKeyID(demoKey2), "caller_scope": "scope-2", "api_key": "sk-b••••••test",
+			"balance": 0.0, "cost": 4.0284, "requests": 32, "note": "Testing Agent Key", "configured": true,
+		},
+	}
+
 	summary := billing.Summary{
 		Currency:  "USD",
 		UpdatedAt: time.Now(),
@@ -75,19 +99,43 @@ func main() {
 			_ = json.NewEncoder(w).Encode(map[string]any{"currency": summary.Currency, "rules": rules})
 			return
 		case "/v0/management/cpa-billing-management/key-balances":
+			if r.Method == http.MethodPatch || r.Method == http.MethodPut {
+				var payload struct {
+					Updates []map[string]any `json:"updates"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&payload); err == nil {
+					for _, update := range payload.Updates {
+						targetID, _ := update["api_key_id"].(string)
+						for i, b := range keyBalances {
+							if b["api_key_id"] == targetID {
+								for k, v := range update {
+									b[k] = v
+								}
+								if amt, ok := update["recharge_amount"].(float64); ok {
+									b["recharge_configured"] = amt > 0
+									if amt > 0 {
+										b["recharge_next_at"] = time.Now().Add(24 * time.Hour).Format(time.RFC3339)
+									} else {
+										delete(b, "recharge_next_at")
+									}
+								}
+								keyBalances[i] = b
+								break
+							}
+						}
+					}
+				}
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"currency": summary.Currency,
-				"balances": []map[string]any{
-					{"api_key_id": "demo-key-1", "caller_scope": "scope-1", "api_key": "sk-a••••••demo", "balance": 15.50, "cost": 30.7, "requests": 96, "note": "Production API Key"},
-					{"api_key_id": "demo-key-2", "caller_scope": "scope-2", "api_key": "sk-b••••••test", "balance": 0.0, "cost": 4.0284, "requests": 32, "note": "Testing Agent Key"},
-				},
+				"balances": keyBalances,
 			})
 			return
 		case "/v0/management/api-keys":
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"api-keys": []string{"sk-a1234567890abcdef1234567890demo", "sk-b9876543210fedcba0987654321test"},
+				"api-keys": []string{demoKey1, demoKey2},
 			})
 			return
 		}

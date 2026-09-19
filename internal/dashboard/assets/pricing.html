@@ -10,7 +10,19 @@
   <header class="header">
     <div class="header-brand">
       <div class="header-top">
-        <h1>CPA 模型费用 <span class="title-badge">Pricing</span></h1>
+        <div class="brand-logo">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+            <polyline points="10 9 9 9 8 9"/>
+          </svg>
+        </div>
+        <div class="header-titles">
+          <h1>CPA 模型费用 <span class="title-badge">Pricing</span></h1>
+          <div class="muted header-desc">配置各模型定价规则，支持从公共目录一键同步最新官方价格</div>
+        </div>
       </div>
     </div>
     <div class="toolbar">
@@ -35,7 +47,10 @@
             <option value="openrouter">OpenRouter 模型 API</option>
           </select>
         </label>
-        <button class="btn primary" id="sync">获取价格差异</button>
+        <button class="btn primary" id="sync">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+          <span>获取价格差异</span>
+        </button>
       </div>
     </section>
 
@@ -59,8 +74,14 @@
           <div class="rules-search-wrap">
             <input type="text" id="ruleSearch" placeholder="按模型名称或通配快速过滤...">
           </div>
-          <button class="btn" id="add">新增规则</button>
-          <button class="btn primary" id="save">保存模型费用</button>
+          <button class="btn" id="add">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span>新增规则</span>
+          </button>
+          <button class="btn primary" id="save">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            <span>保存模型费用</span>
+          </button>
         </div>
       </div>
       <div id="rules" class="rules"></div>

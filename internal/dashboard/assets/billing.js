@@ -42,8 +42,8 @@ const escapeHTML = value => String(value ?? '').replace(
   character => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[character]),
 );
 const formatNumber = value => Number(value || 0).toLocaleString('zh-CN');
-const formatMoney = value => escapeHTML(state.currency || 'USD') + ' ' + Number(value || 0).toFixed(6);
-const costHelp = '<span class="cost-help"><button type="button" class="cost-help-button" data-action="cost-help" aria-label="费用计算说明" aria-expanded="false">?</button><span class="cost-help-tooltip" role="tooltip" hidden>上游明确返回金额时优先使用，否则按“模型费用”中的每百万 token 价格估算</span></span>';
+const formatMoney = value => escapeHTML(state.currency || 'USD') + ' ' + Number(value || 0).toFixed(3);
+const costHelp = '<span class="cost-help"><button type="button" class="cost-help-button" data-action="cost-help" aria-label="费用计算说明" aria-expanded="false"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></button><span class="cost-help-tooltip" role="tooltip" hidden>上游明确返回金额时优先使用，否则按“模型费用”中的每百万 token 价格估算</span></span>';
 
 function formatDuration(nanoseconds) {
   const milliseconds = Number(nanoseconds || 0) / 1e6;
@@ -110,17 +110,17 @@ function renderCards() {
       label: '总费用',
       value: formatMoney(totals.cost),
       isPrimary: true,
-      icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
+      icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
     },
     {
       label: '请求数',
       value: formatNumber(totals.requests),
-      icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>',
+      icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>',
     },
     {
       label: '总 token',
       value: formatNumber(totals.total_tokens),
-      icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3"/></svg>',
+      icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3"/></svg>',
     },
     {
       label: '失败请求',
@@ -130,7 +130,7 @@ function renderCards() {
       sub: failed > 0
         ? '<div class="card-sub"><span class="badge-rate">' + failRate + '% 失败率</span></div>'
         : '<div class="card-sub"><span class="badge-rate good">0% 失败率</span></div>',
-      icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+      icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
     },
   ];
   document.getElementById('cards').innerHTML = cards
@@ -144,8 +144,14 @@ function renderCards() {
 }
 
 function sortArrow(active, asc) {
-  if (!active) return '<span class="sort-icon">▲▼</span>';
-  return '<span class="sort-icon" style="opacity:1">' + (asc ? '▲' : '▼') + '</span>';
+  if (!active) {
+    return '<span class="sort-icon-wrap" aria-hidden="true"><svg class="sort-icon-svg inactive" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg></span>';
+  }
+  return '<span class="sort-icon-wrap active" aria-hidden="true">'
+    + (asc
+      ? '<svg class="sort-icon-svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>'
+      : '<svg class="sort-icon-svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>')
+    + '</span>';
 }
 
 function renderModels() {
@@ -242,7 +248,7 @@ function renderEvents() {
         + '<td class="num"><div class="dual-metric"><span class="dual-metric-primary">' + formatDuration(event.latency_ns) + '</span><span class="dual-metric-secondary">首字 ' + formatDuration(event.ttft_ns) + '</span></div></td>'
         + '<td class="num"><div class="dual-metric"><span class="dual-metric-primary">' + formatNumber(event.input_tokens) + '</span><span class="dual-metric-secondary">缓存 ' + formatNumber(event.cached_tokens) + '</span></div></td>'
         + '<td class="num">' + formatNumber(event.output_tokens) + '</td>'
-        + '<td class="num">' + (event.currency ? escapeHTML(event.currency) + ' ' : '') + Number(event.cost || 0).toFixed(6) + '</td>'
+        + '<td class="num">' + (event.currency ? escapeHTML(event.currency) + ' ' : '') + Number(event.cost || 0).toFixed(3) + '</td>'
         + '<td>' + (event.failed ? '<span class="pill danger">失败</span>' : '<span class="pill success">成功</span>') + '</td>'
       + '</tr>').join('')
       + '</tbody></table></div>'
